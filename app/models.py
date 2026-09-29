@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base, utcnow
@@ -31,6 +31,7 @@ class AuditEvent(str, enum.Enum):
     ACCESS_GRANTED = "ACCESS_GRANTED"
     ACCESS_DENIED = "ACCESS_DENIED"
     ACCESS_REVOKED = "ACCESS_REVOKED"
+    USER_CREATED = "USER_CREATED"
 
 
 class User(Base):
@@ -38,10 +39,17 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    # Stable identifier shared with the identity provider; tokens are matched on it.
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     department: Mapped[str] = mapped_column(String(80))
     role: Mapped[str] = mapped_column(String(80))
+    # Platform administrators manage identities. They get no extra resource access.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    requests: Mapped[list["AccessRequest"]] = relationship(back_populates="user")
+    requests: Mapped[list["AccessRequest"]] = relationship(
+        back_populates="user", foreign_keys="AccessRequest.user_id"
+    )
 
 
 class Resource(Base):
@@ -77,11 +85,14 @@ class AccessRequest(Base):
     parser: Mapped[str] = mapped_column(String(40), default="")
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped[User] = relationship(back_populates="requests")
+    user: Mapped[User] = relationship(back_populates="requests", foreign_keys=[user_id])
 
 
 class AuditLog(Base):
-    """Append-only history of every request, decision and revocation."""
+    """Append-only, hash-chained history of every request, decision and revocation.
+
+    Rows are written only through ``app.audit``; see that module for the chaining scheme.
+    """
 
     __tablename__ = "audit_logs"
 
@@ -89,7 +100,11 @@ class AuditLog(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     event: Mapped[AuditEvent] = mapped_column(Enum(AuditEvent, native_enum=False, length=30))
     request_id: Mapped[int | None] = mapped_column(ForeignKey("access_requests.id"), nullable=True)
+    # user_id is the subject of the event; actor_id is who caused it (None = the system).
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     resource: Mapped[str | None] = mapped_column(String(120), nullable=True)
     action: Mapped[str | None] = mapped_column(String(20), nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
+    prev_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    hash: Mapped[str] = mapped_column(String(64), unique=True)

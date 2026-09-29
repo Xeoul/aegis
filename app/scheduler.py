@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
+from app import audit
 from app.database import SessionLocal, utcnow
-from app.models import AccessRequest, AuditEvent, AuditLog, RequestStatus
+from app.models import AccessRequest, AuditEvent, RequestStatus
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +28,16 @@ def revoke_expired_grants() -> int:
         for grant in expired:
             grant.status = RequestStatus.REVOKED
             grant.revoked_at = now
-            db.add(
-                AuditLog(
-                    event=AuditEvent.ACCESS_REVOKED,
-                    request_id=grant.id,
-                    user_id=grant.user_id,
-                    resource=grant.resource,
-                    action=grant.action,
-                    detail=f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked.",
-                )
+            audit.record(
+                db,
+                AuditEvent.ACCESS_REVOKED,
+                request_id=grant.id,
+                user_id=grant.user_id,
+                resource=grant.resource,
+                action=grant.action,
+                detail=f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked.",
             )
-        db.commit()
+        audit.commit(db)
     if expired:
         logger.info("Revoked %d expired grant(s)", len(expired))
     return len(expired)

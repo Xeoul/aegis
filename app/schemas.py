@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models import AuditEvent, RequestStatus, SensitivityLevel
 
@@ -16,14 +16,35 @@ Decision = Literal["ALLOW", "DENY"]
 
 class UserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
     department: str = Field(min_length=1, max_length=80, examples=["Engineering"])
     role: str = Field(min_length=1, max_length=80, examples=["engineer"])
+    is_admin: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return v.lower()
 
 
 class UserOut(UserCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    is_active: bool
+
+
+# --- Authentication ------------------------------------------------------------
+
+
+class DevTokenRequest(BaseModel):
+    email: EmailStr
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
 
 
 class ResourceOut(BaseModel):
@@ -39,9 +60,8 @@ class ResourceOut(BaseModel):
 
 
 class AccessRequestIn(BaseModel):
-    """An access request written in plain English."""
+    """An access request written in plain English. The requester is the authenticated caller."""
 
-    user_id: int
     request_text: str = Field(
         min_length=5,
         max_length=2000,
@@ -120,6 +140,17 @@ class AuditLogOut(BaseModel):
     event: AuditEvent
     request_id: int | None
     user_id: int | None
+    actor_id: int | None
     resource: str | None
     action: str | None
     detail: str
+    prev_hash: str
+    hash: str
+
+
+class AuditVerificationOut(BaseModel):
+    valid: bool
+    entries_checked: int
+    head_hash: str
+    first_invalid_id: int | None
+    reason: str | None
