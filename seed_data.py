@@ -11,17 +11,25 @@ from sqlalchemy import select
 from app.database import Base, SessionLocal, engine, init_db
 from app.models import Resource, SensitivityLevel, User
 
+EMAIL_DOMAIN = "aegis.example"
+
 USERS = [
-    # name, department, role
-    ("Alice Chen", "Engineering", "engineer"),
-    ("Bob Martinez", "Engineering", "sre"),
-    ("Carol Singh", "Finance", "analyst"),
-    ("Dan Okafor", "Finance", "manager"),
-    ("Eve Johansson", "Security", "security engineer"),
-    ("Frank Lee", "Marketing", "intern"),
-    ("Grace Kim", "Compliance", "auditor"),
-    ("Hank Patel", "Engineering", "contractor"),
+    # name, department, role, is_admin
+    ("Alice Chen", "Engineering", "engineer", False),
+    ("Bob Martinez", "Engineering", "sre", False),
+    ("Carol Singh", "Finance", "analyst", False),
+    ("Dan Okafor", "Finance", "manager", False),
+    ("Eve Johansson", "Security", "security engineer", False),
+    ("Frank Lee", "Marketing", "intern", False),
+    ("Grace Kim", "Compliance", "auditor", False),
+    ("Hank Patel", "Engineering", "contractor", False),
+    # Identity administrator: can provision users but holds no special resource access.
+    ("Iris Novak", "IT", "it admin", True),
 ]
+
+
+def email_for(name: str) -> str:
+    return f"{name.lower().replace(' ', '.')}@{EMAIL_DOMAIN}"
 
 RESOURCES = [
     # name, sensitivity, owner department
@@ -43,10 +51,12 @@ def seed(reset: bool = False) -> None:
         Base.metadata.drop_all(bind=engine)
     init_db()
     with SessionLocal() as db:
-        existing_users = {u.name for u in db.scalars(select(User))}
+        existing_users = {u.email for u in db.scalars(select(User))}
         existing_resources = set(db.scalars(select(Resource.name)))
         db.add_all(
-            User(name=n, department=d, role=r) for n, d, r in USERS if n not in existing_users
+            User(name=n, email=email_for(n), department=d, role=r, is_admin=a)
+            for n, d, r, a in USERS
+            if email_for(n) not in existing_users
         )
         db.add_all(
             Resource(name=n, sensitivity_level=s, owner_department=o)
@@ -57,10 +67,16 @@ def seed(reset: bool = False) -> None:
 
         print("Users:")
         for u in db.scalars(select(User).order_by(User.id)):
-            print(f"  {u.id:>3}  {u.name:<16} {u.department:<12} {u.role}")
+            admin = " (admin)" if u.is_admin else ""
+            print(f"  {u.id:>3}  {u.email:<28} {u.department:<12} {u.role}{admin}")
         print("\nResources:")
         for r in db.scalars(select(Resource).order_by(Resource.id)):
             print(f"  {r.id:>3}  {r.name:<20} {r.sensitivity_level.value:<13} {r.owner_department or '-'}")
+        print(
+            "\nGet a token (dev mode):\n"
+            "  curl -s localhost:8000/auth/dev-token -H 'content-type: application/json' "
+            f"-d '{{\"email\": \"{email_for(USERS[0][0])}\"}}'"
+        )
 
 
 if __name__ == "__main__":

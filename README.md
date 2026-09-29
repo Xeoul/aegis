@@ -11,41 +11,74 @@ Built with FastAPI, SQLite (SQLAlchemy 2), Pydantic v2 and APScheduler.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-python seed_data.py                   # creates aegis_jit.db with mock users and resources
+python seed_data.py --reset           # creates aegis_jit.db with mock users and resources
 uvicorn app.main:app --reload         # interactive docs at http://localhost:8000/docs
 ```
 
-Try it:
+Every endpoint except `/health` and `/auth/dev-token` requires a bearer token. In dev
+mode Aegis acts as its own identity provider:
 
 ```bash
+token() { curl -s localhost:8000/auth/dev-token -H 'content-type: application/json' \
+  -d "{\"email\": \"$1\"}" | python -c 'import sys,json;print(json.load(sys.stdin)["access_token"])'; }
+BOB=$(token bob.martinez@aegis.example)      # Engineering SRE
+FRANK=$(token frank.lee@aegis.example)       # Marketing intern
+GRACE=$(token grace.kim@aegis.example)       # Compliance auditor
+
 # ALLOW: SRE, restricted resource, duration capped at 2h
-curl -s localhost:8000/request-access -H 'content-type: application/json' \
-  -d '{"user_id": 2, "request_text": "Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy"}'
+curl -s localhost:8000/request-access -H "Authorization: Bearer $BOB" -H 'content-type: application/json' \
+  -d '{"request_text": "Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy"}'
 
 # DENY: intern asking for a Finance-owned confidential system
-curl -s localhost:8000/request-access -H 'content-type: application/json' \
-  -d '{"user_id": 6, "request_text": "let me edit payroll-system for a day"}'
+curl -s localhost:8000/request-access -H "Authorization: Bearer $FRANK" -H 'content-type: application/json' \
+  -d '{"request_text": "let me edit payroll-system for a day"}'
 
-curl -s localhost:8000/active-grants
-curl -s 'localhost:8000/audit-logs?limit=20'
+curl -s localhost:8000/active-grants -H "Authorization: Bearer $BOB"
+curl -s localhost:8000/audit-logs/verify -H "Authorization: Bearer $GRACE"
 ```
 
 ## Endpoints
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/users` | Create a test user (`name`, `department`, `role`) |
-| `GET` | `/users`, `/resources` | List seeded users and the resource catalog |
-| `POST` | `/request-access` | Submit `{user_id, request_text}`; returns the parsed policy, the ABAC decision and its reasons |
-| `GET` | `/active-grants` | Unexpired `ACTIVE` grants (optional `?user_id=`) |
-| `GET` | `/audit-logs` | Every submission, grant, denial and revocation, newest first (`?user_id=`, `?event=`, `?limit=`) |
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| `POST` | `/auth/dev-token` | anyone (dev mode only) | Issue a token for a provisioned user |
+| `GET` | `/me` | authenticated | The caller's identity |
+| `POST` | `/users` | admin | Provision a user |
+| `GET` | `/users`, `/resources` | authenticated | Directory and resource catalog |
+| `POST` | `/request-access` | authenticated | Submit `{request_text}` as the caller; returns the parsed policy, decision and reasons |
+| `GET` | `/active-grants` | authenticated | Your unexpired grants (oversight roles see all, `?user_id=`) |
+| `GET` | `/audit-logs` | auditor, security engineer, admin | Hash-chained history, newest first (`?user_id=`, `?event=`, `?limit=`) |
+| `GET` | `/audit-logs/verify` | auditor, security engineer, admin | Recompute the chain and report the first tampered entry |
 
 All timestamps are UTC.
+
+## Authentication and authorization
+
+- **Identity comes only from the token.** Tokens are matched to users by the `email` claim;
+  unknown or deactivated identities get 403.
+- **`AEGIS_AUTH_MODE=dev`** (default): Aegis signs HS256 tokens itself via `/auth/dev-token`.
+  This lets anyone log in as any provisioned user and exists only for local testing.
+- **`AEGIS_AUTH_MODE=oidc`**: tokens come from an external IdP (Keycloak, Okta, Entra ID,
+  Auth0) and are verified against its JWKS (`RS256`/`ES256` only, with issuer, audience and
+  expiry checks). The dev token endpoint returns 404.
+- **Least privilege for administrators.** `is_admin` lets a user provision identities and read
+  the audit trail. It grants no access to resources; admins go through the same request flow.
+
+## Tamper-evident audit trail
+
+Every audit entry stores `prev_hash` and `hash = HMAC-SHA256(AEGIS_AUDIT_KEY, prev_hash ||
+entry)`. Editing, deleting or reordering a row breaks the chain from that point on, and
+`GET /audit-logs/verify` reports the first bad entry. Because the key lives outside the database,
+someone with only database access cannot rebuild a valid chain. A UNIQUE constraint on
+`prev_hash` stops concurrent writers from forking it.
 
 ## Layout
 
 ```
 app/
+  config.py      Settings from environment variables
+  auth.py        JWT verification (dev issuer or OIDC/JWKS), role checks
+  audit.py       HMAC hash-chained audit writer and verifier
   database.py    SQLite engine, session factory, get_db dependency
   models.py      User, Resource, AccessRequest, AuditLog
   schemas.py     Pydantic I/O models: AccessRequestIn, ParsedPolicy, ABACPolicy, ...
@@ -99,6 +132,11 @@ Granted durations are capped per sensitivity level: 72h public, 24h internal, 8h
 | `AEGIS_LLM_MODEL` | `claude-opus-5-5` |
 | `AEGIS_SCHEDULER_ENABLED` | `true` |
 | `AEGIS_REVOCATION_INTERVAL_SECONDS` | `60` |
+| `AEGIS_AUTH_MODE` | `dev` (`oidc` for an external IdP) |
+| `AEGIS_JWT_SECRET` | random per process (dev mode signing key) |
+| `AEGIS_TOKEN_TTL_MINUTES` | `60` |
+| `AEGIS_OIDC_ISSUER`, `AEGIS_OIDC_AUDIENCE`, `AEGIS_OIDC_JWKS_URL` | required in `oidc` mode (audience defaults to `aegis-jit`) |
+| `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
 
 ## Tests
 

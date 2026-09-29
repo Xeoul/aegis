@@ -1,4 +1,4 @@
-"""FastAPI application: user management, JIT access requests, grants and audit history."""
+"""FastAPI application: identities, JIT access requests, grants and audit history."""
 
 import logging
 import os
@@ -7,8 +7,12 @@ from datetime import timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import audit
+from app.auth import create_dev_token, get_current_user, is_oversight, require_admin, require_oversight
+from app.config import settings
 from app.database import get_db, init_db, utcnow
 from app.evaluator import evaluate
 from app.llm_parser import ParserError, parse_access_request
@@ -19,24 +23,33 @@ from app.schemas import (
     AccessDecisionOut,
     AccessRequestIn,
     AuditLogOut,
+    AuditVerificationOut,
+    DevTokenRequest,
     GrantOut,
     PolicyConditions,
     PolicyResource,
     PolicySubject,
     ResourceOut,
+    TokenOut,
     UserCreate,
     UserOut,
 )
 
 logging.basicConfig(level=os.getenv("AEGIS_LOG_LEVEL", "INFO"))
+logger = logging.getLogger("aegis")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    if settings.auth_mode == "dev":
+        logger.warning(
+            "AEGIS_AUTH_MODE=dev: POST /auth/dev-token issues tokens for any provisioned user. "
+            "Use AEGIS_AUTH_MODE=oidc outside local development."
+        )
     scheduler = None
-    if os.getenv("AEGIS_SCHEDULER_ENABLED", "true").lower() == "true":
-        scheduler = create_scheduler(int(os.getenv("AEGIS_REVOCATION_INTERVAL_SECONDS", "60")))
+    if settings.scheduler_enabled:
+        scheduler = create_scheduler(settings.revocation_interval_seconds)
         scheduler.start()
     yield
     if scheduler:
@@ -46,7 +59,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="Aegis-JIT",
     description="Just-In-Time IAM policy engine: natural-language access requests, ABAC evaluation, auto-expiring grants.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -56,24 +69,55 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# --- Authentication ------------------------------------------------------------
+
+
+@app.post("/auth/dev-token", response_model=TokenOut, tags=["auth"])
+def dev_token(payload: DevTokenRequest, db: Session = Depends(get_db)) -> TokenOut:
+    """Stand-in identity provider for local development. Disabled when AEGIS_AUTH_MODE=oidc."""
+    if settings.auth_mode != "dev":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown or inactive user")
+    token, ttl = create_dev_token(user)
+    return TokenOut(access_token=token, expires_in=ttl)
+
+
+@app.get("/me", response_model=UserOut, tags=["auth"])
+def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
 # --- Users & resources -------------------------------------------------------
 
 
 @app.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED, tags=["users"])
-def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
+def create_user(payload: UserCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)) -> User:
     user = User(**payload.model_dump())
     db.add(user)
-    db.commit()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"A user with email {payload.email} already exists") from exc
+    audit.record(
+        db,
+        AuditEvent.USER_CREATED,
+        user_id=user.id,
+        actor_id=admin.id,
+        detail=f"Provisioned {user.email} ({user.department}/{user.role}, admin={user.is_admin}).",
+    )
+    audit.commit(db)
     return user
 
 
 @app.get("/users", response_model=list[UserOut], tags=["users"])
-def list_users(db: Session = Depends(get_db)) -> list[User]:
+def list_users(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[User]:
     return list(db.scalars(select(User).order_by(User.id)))
 
 
 @app.get("/resources", response_model=list[ResourceOut], tags=["resources"])
-def list_resources(db: Session = Depends(get_db)) -> list[Resource]:
+def list_resources(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Resource]:
     return list(db.scalars(select(Resource).order_by(Resource.id)))
 
 
@@ -81,11 +125,11 @@ def list_resources(db: Session = Depends(get_db)) -> list[Resource]:
 
 
 @app.post("/request-access", response_model=AccessDecisionOut, tags=["access"])
-def request_access(payload: AccessRequestIn, db: Session = Depends(get_db)) -> AccessDecisionOut:
-    user = db.get(User, payload.user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {payload.user_id} not found")
-
+def request_access(
+    payload: AccessRequestIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccessDecisionOut:
     catalog = list(db.scalars(select(Resource.name)))
     try:
         parsed = parse_access_request(payload.request_text, catalog)
@@ -114,29 +158,14 @@ def request_access(payload: AccessRequestIn, db: Session = Depends(get_db)) -> A
     db.add(record)
     db.flush()
 
-    audit_common = dict(request_id=record.id, user_id=user.id, resource=policy.resource, action=policy.action)
-    db.add(
-        AuditLog(
-            event=AuditEvent.REQUEST_SUBMITTED,
-            timestamp=now,
-            detail=f'[{parsed.parser}] "{payload.request_text}"',
-            **audit_common,
-        )
-    )
-    db.add(
-        AuditLog(
-            event=AuditEvent.ACCESS_GRANTED if result.allowed else AuditEvent.ACCESS_DENIED,
-            timestamp=now,
-            detail=(
-                f"Granted for {result.granted_duration_hours}h until {expires_at.isoformat()}Z. "
-                if result.allowed
-                else ""
-            )
-            + " ".join(result.reasons),
-            **audit_common,
-        )
-    )
-    db.commit()
+    common = dict(request_id=record.id, user_id=user.id, actor_id=user.id, resource=policy.resource, action=policy.action)
+    audit.record(db, AuditEvent.REQUEST_SUBMITTED, detail=f'[{parsed.parser}] "{payload.request_text}"', **common)
+    if result.allowed and expires_at is not None:
+        detail = f"Granted for {result.granted_duration_hours}h until {expires_at.isoformat()}Z. "
+        audit.record(db, AuditEvent.ACCESS_GRANTED, detail=detail + " ".join(result.reasons), **common)
+    else:
+        audit.record(db, AuditEvent.ACCESS_DENIED, detail=" ".join(result.reasons), **common)
+    audit.commit(db)
 
     return AccessDecisionOut(
         request_id=record.id,
@@ -161,9 +190,15 @@ def request_access(payload: AccessRequestIn, db: Session = Depends(get_db)) -> A
 
 @app.get("/active-grants", response_model=list[GrantOut], tags=["access"])
 def active_grants(
-    user_id: int | None = Query(None, description="Only grants for this user"),
+    user_id: int | None = Query(None, description="Only grants for this user (oversight roles only)"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[AccessRequest]:
+    """Your own active grants. Auditors, security engineers and admins see everyone's."""
+    if not is_oversight(user):
+        if user_id not in (None, user.id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only list your own grants")
+        user_id = user.id
     # Filter on expires_at as well so a grant never shows as active between its expiry
     # and the next scheduler sweep.
     query = select(AccessRequest).where(
@@ -175,11 +210,15 @@ def active_grants(
     return list(db.scalars(query.order_by(AccessRequest.expires_at)))
 
 
+# --- Audit -------------------------------------------------------------------
+
+
 @app.get("/audit-logs", response_model=list[AuditLogOut], tags=["audit"])
 def audit_logs(
     user_id: int | None = Query(None),
     event: AuditEvent | None = Query(None),
     limit: int = Query(200, ge=1, le=1000),
+    _: User = Depends(require_oversight),
     db: Session = Depends(get_db),
 ) -> list[AuditLog]:
     query = select(AuditLog)
@@ -188,3 +227,9 @@ def audit_logs(
     if event is not None:
         query = query.where(AuditLog.event == event)
     return list(db.scalars(query.order_by(AuditLog.id.desc()).limit(limit)))
+
+
+@app.get("/audit-logs/verify", response_model=AuditVerificationOut, tags=["audit"])
+def verify_audit_logs(_: User = Depends(require_oversight), db: Session = Depends(get_db)) -> AuditVerificationOut:
+    """Recompute the HMAC chain over the whole audit trail and report the first broken link."""
+    return AuditVerificationOut(**audit.verify_chain(db).__dict__)
