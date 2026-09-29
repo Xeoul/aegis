@@ -88,7 +88,7 @@ def test_users_only_see_their_own_grants(client, auth):
 
 
 def test_dev_token_disabled_in_oidc_mode(client, monkeypatch):
-    monkeypatch.setattr("app.main.settings", type("S", (), {"auth_mode": "oidc"})())
+    monkeypatch.setattr("app.config.settings", type("S", (), {"auth_mode": "oidc"})())
     assert client.post("/auth/dev-token", json={"email": ALICE}).status_code == 404
 
 

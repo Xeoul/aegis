@@ -21,9 +21,12 @@ class SensitivityLevel(str, enum.Enum):
 
 
 class RequestStatus(str, enum.Enum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"  # policy allows it, waiting for a human approver
     ACTIVE = "ACTIVE"  # granted and not yet expired
     DENIED = "DENIED"  # rejected by the policy evaluator
-    REVOKED = "REVOKED"  # grant expired and was revoked by the scheduler
+    REJECTED = "REJECTED"  # rejected by an approver
+    EXPIRED = "EXPIRED"  # nobody approved it before the approval deadline
+    REVOKED = "REVOKED"  # grant ended: expired, revoked early, or owner deprovisioned
 
 
 class AuditEvent(str, enum.Enum):
@@ -31,7 +34,15 @@ class AuditEvent(str, enum.Enum):
     ACCESS_GRANTED = "ACCESS_GRANTED"
     ACCESS_DENIED = "ACCESS_DENIED"
     ACCESS_REVOKED = "ACCESS_REVOKED"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    REQUEST_APPROVED = "REQUEST_APPROVED"
+    REQUEST_REJECTED = "REQUEST_REJECTED"
+    REQUEST_EXPIRED = "REQUEST_EXPIRED"
+    BREAK_GLASS_USED = "BREAK_GLASS_USED"
+    BREAK_GLASS_REVIEWED = "BREAK_GLASS_REVIEWED"
     USER_CREATED = "USER_CREATED"
+    USER_UPDATED = "USER_UPDATED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
 
 
 class User(Base):
@@ -46,10 +57,12 @@ class User(Base):
     # Platform administrators manage identities. They get no extra resource access.
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     requests: Mapped[list["AccessRequest"]] = relationship(
         back_populates="user", foreign_keys="AccessRequest.user_id"
     )
+    manager: Mapped["User | None"] = relationship(remote_side=[id], foreign_keys=[manager_id])
 
 
 class Resource(Base):
@@ -83,7 +96,21 @@ class AccessRequest(Base):
     duration_hours: Mapped[int] = mapped_column(Integer, default=0)
     decision_reason: Mapped[str] = mapped_column(Text, default="")
     parser: Mapped[str] = mapped_column(String(40), default="")
+
+    # Approval workflow
+    approval_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Emergency access that skipped approval and must be reviewed afterwards
+    break_glass: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped[User] = relationship(back_populates="requests", foreign_keys=[user_id])
 

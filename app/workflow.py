@@ -1,0 +1,135 @@
+"""Grant lifecycle: approvals, separation of duties, break-glass, revocation, leavers/movers."""
+
+from datetime import timedelta
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app import audit
+from app.database import utcnow
+from app.evaluator import BREAK_GLASS_MAX_HOURS, normalize
+from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
+
+APPROVAL_WINDOW_HOURS = 24
+
+# Security engineers may approve anywhere. Managers approve for their own reports and for
+# resources their department owns. Identity administrators are deliberately NOT approvers:
+# whoever manages accounts should not also be able to hand out access.
+GLOBAL_APPROVER_ROLES = {"security engineer"}
+DEPARTMENT_APPROVER_ROLES = {"manager"}
+
+
+def approver_eligibility(approver: User, request: AccessRequest, resource: Resource | None) -> tuple[bool, str]:
+    """Can ``approver`` approve, reject or review ``request``? Returns (allowed, reason)."""
+    if approver.id == request.user_id:
+        return False, "Separation of duties: you cannot approve your own request."
+    if not approver.is_active:
+        return False, "Approver account is deactivated."
+    role = normalize(approver.role)
+    if role in GLOBAL_APPROVER_ROLES:
+        return True, f"{approver.role} may approve any request."
+    if request.user.manager_id == approver.id:
+        return True, "Approver is the requester's manager."
+    if (
+        role in DEPARTMENT_APPROVER_ROLES
+        and resource is not None
+        and resource.owner_department
+        and normalize(approver.department) == normalize(resource.owner_department)
+    ):
+        return True, f"Approver manages {resource.owner_department}, which owns {resource.name}."
+    return False, "Only the requester's manager, a manager of the owning department, or security may approve."
+
+
+def activate(db: Session, request: AccessRequest, actor_id: int | None, detail: str) -> None:
+    now = utcnow()
+    request.status = RequestStatus.ACTIVE
+    request.expires_at = now + timedelta(hours=request.duration_hours)
+    audit.record(
+        db,
+        AuditEvent.ACCESS_GRANTED,
+        request_id=request.id,
+        user_id=request.user_id,
+        actor_id=actor_id,
+        resource=request.resource,
+        action=request.action,
+        detail=f"Granted for {request.duration_hours}h until {request.expires_at.isoformat()}Z. {detail}".strip(),
+    )
+
+
+def start_approval(db: Session, request: AccessRequest) -> None:
+    request.status = RequestStatus.PENDING_APPROVAL
+    request.approval_deadline = utcnow() + timedelta(hours=APPROVAL_WINDOW_HOURS)
+    audit.record(
+        db,
+        AuditEvent.APPROVAL_REQUIRED,
+        request_id=request.id,
+        user_id=request.user_id,
+        actor_id=request.user_id,
+        resource=request.resource,
+        action=request.action,
+        detail=f"Awaiting approval until {request.approval_deadline.isoformat()}Z.",
+    )
+
+
+def break_glass(db: Session, request: AccessRequest, reason: str) -> None:
+    request.break_glass = True
+    request.duration_hours = min(request.duration_hours, BREAK_GLASS_MAX_HOURS)
+    audit.record(
+        db,
+        AuditEvent.BREAK_GLASS_USED,
+        request_id=request.id,
+        user_id=request.user_id,
+        actor_id=request.user_id,
+        resource=request.resource,
+        action=request.action,
+        detail=f"Emergency access without prior approval, capped at {request.duration_hours}h. "
+        f"Requires post-incident review. Justification: {reason}",
+    )
+    activate(db, request, request.user_id, "Break-glass.")
+
+
+def revoke(db: Session, grant: AccessRequest, actor_id: int | None, reason: str) -> None:
+    now = utcnow()
+    grant.status = RequestStatus.REVOKED
+    grant.revoked_at = now
+    grant.revoked_by_id = actor_id
+    grant.revoke_reason = reason
+    audit.record(
+        db,
+        AuditEvent.ACCESS_REVOKED,
+        request_id=grant.id,
+        user_id=grant.user_id,
+        actor_id=actor_id,
+        resource=grant.resource,
+        action=grant.action,
+        detail=reason,
+    )
+
+
+def revoke_all_for_user(db: Session, user: User, actor_id: int | None, reason: str) -> int:
+    """Revoke active grants and cancel pending requests (used for leavers and movers)."""
+    open_requests = db.scalars(
+        select(AccessRequest).where(
+            AccessRequest.user_id == user.id,
+            AccessRequest.status.in_([RequestStatus.ACTIVE, RequestStatus.PENDING_APPROVAL]),
+        )
+    ).all()
+    for req in open_requests:
+        if req.status == RequestStatus.ACTIVE:
+            revoke(db, req, actor_id, reason)
+        else:
+            req.status = RequestStatus.REJECTED
+            req.decided_by_id = actor_id
+            req.decided_at = utcnow()
+            req.decision_comment = reason
+            audit.record(
+                db,
+                AuditEvent.REQUEST_REJECTED,
+                request_id=req.id,
+                user_id=req.user_id,
+                actor_id=actor_id,
+                resource=req.resource,
+                action=req.action,
+                detail=reason,
+            )
+    return len(open_requests)

@@ -20,6 +20,7 @@ class UserCreate(BaseModel):
     department: str = Field(min_length=1, max_length=80, examples=["Engineering"])
     role: str = Field(min_length=1, max_length=80, examples=["engineer"])
     is_admin: bool = False
+    manager_id: int | None = None
 
     @field_validator("email")
     @classmethod
@@ -32,6 +33,16 @@ class UserOut(UserCreate):
 
     id: int
     is_active: bool
+
+
+class UserUpdate(BaseModel):
+    """Joiner/mover/leaver changes. Any change to access-relevant attributes revokes open grants."""
+
+    department: str | None = Field(None, min_length=1, max_length=80)
+    role: str | None = Field(None, min_length=1, max_length=80)
+    manager_id: int | None = None
+    is_admin: bool | None = None
+    is_active: bool | None = None
 
 
 # --- Authentication ------------------------------------------------------------
@@ -66,6 +77,11 @@ class AccessRequestIn(BaseModel):
         min_length=5,
         max_length=2000,
         examples=["I need read access to the prod-db for 4 hours to debug a failing migration"],
+    )
+    break_glass: bool = Field(
+        False,
+        description="Emergency access: skip approval for a request that needs it. Capped at 1h and "
+        "flagged for mandatory post-incident review. The policy rules still apply.",
     )
 
 
@@ -109,6 +125,9 @@ class AccessDecisionOut(BaseModel):
     request_id: int
     decision: Decision
     status: RequestStatus
+    requires_approval: bool
+    break_glass: bool
+    approval_deadline: datetime | None
     reasons: list[str]
     parsed: ParsedPolicy
     parser: str
@@ -130,6 +149,38 @@ class GrantOut(BaseModel):
     expires_at: datetime | None
     duration_hours: int
     allow_reason: str
+    break_glass: bool
+
+
+class RequestOut(GrantOut):
+    """Full lifecycle view of one access request."""
+
+    request_text: str
+    decision_reason: str
+    parser: str
+    approval_deadline: datetime | None
+    decided_by_id: int | None
+    decided_at: datetime | None
+    decision_comment: str | None
+    reviewed_by_id: int | None
+    reviewed_at: datetime | None
+    revoked_at: datetime | None
+    revoked_by_id: int | None
+    revoke_reason: str | None
+
+
+class CommentIn(BaseModel):
+    comment: str = Field(min_length=3, max_length=1000)
+
+
+class RevokeIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class ApprovalTaskOut(BaseModel):
+    kind: Literal["approval", "break_glass_review"]
+    eligibility: str
+    request: RequestOut
 
 
 class AuditLogOut(BaseModel):

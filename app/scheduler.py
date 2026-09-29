@@ -1,4 +1,4 @@
-"""Background job that revokes expired just-in-time grants."""
+"""Background jobs: revoke expired grants and expire approvals nobody acted on."""
 
 import logging
 from datetime import datetime, timezone
@@ -6,36 +6,28 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
-from app import audit
+from app import audit, workflow
 from app.database import SessionLocal, utcnow
 from app.models import AccessRequest, AuditEvent, RequestStatus
 
 logger = logging.getLogger(__name__)
 
-REVOCATION_JOB_ID = "revoke-expired-grants"
+SWEEP_JOB_ID = "lifecycle-sweep"
 
 
 def revoke_expired_grants() -> int:
     """Mark every ACTIVE grant whose ``expires_at`` has passed as REVOKED. Returns the count."""
-    now = utcnow()
     with SessionLocal() as db:
         expired = db.scalars(
             select(AccessRequest).where(
                 AccessRequest.status == RequestStatus.ACTIVE,
-                AccessRequest.expires_at <= now,
+                AccessRequest.expires_at <= utcnow(),
             )
         ).all()
         for grant in expired:
-            grant.status = RequestStatus.REVOKED
-            grant.revoked_at = now
-            audit.record(
-                db,
-                AuditEvent.ACCESS_REVOKED,
-                request_id=grant.id,
-                user_id=grant.user_id,
-                resource=grant.resource,
-                action=grant.action,
-                detail=f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked.",
+            assert grant.expires_at is not None  # guaranteed by the query
+            workflow.revoke(
+                db, grant, None, f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked."
             )
         audit.commit(db)
     if expired:
@@ -43,16 +35,44 @@ def revoke_expired_grants() -> int:
     return len(expired)
 
 
+def expire_stale_requests() -> int:
+    """Close PENDING_APPROVAL requests whose approval window has passed. Returns the count."""
+    with SessionLocal() as db:
+        stale = db.scalars(
+            select(AccessRequest).where(
+                AccessRequest.status == RequestStatus.PENDING_APPROVAL,
+                AccessRequest.approval_deadline <= utcnow(),
+            )
+        ).all()
+        for req in stale:
+            req.status = RequestStatus.EXPIRED
+            audit.record(
+                db,
+                AuditEvent.REQUEST_EXPIRED,
+                request_id=req.id,
+                user_id=req.user_id,
+                resource=req.resource,
+                action=req.action,
+                detail="No approver acted before the approval deadline.",
+            )
+        audit.commit(db)
+    return len(stale)
+
+
+def run_sweep() -> None:
+    revoke_expired_grants()
+    expire_stale_requests()
+
+
 def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
-        revoke_expired_grants,
+        run_sweep,
         "interval",
         seconds=interval_seconds,
-        id=REVOCATION_JOB_ID,
+        id=SWEEP_JOB_ID,
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.now(timezone.utc),  # also sweep once at startup
     )
     return scheduler
-
