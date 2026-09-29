@@ -162,7 +162,10 @@ function describe(p) {
 }
 
 function signInAs(email) {
-    current = people.find((p) => p.email.startsWith(email)) || current;
+    const next = people.find((p) => p.email.startsWith(email)) || current;
+    // A decision belongs to whoever asked; don't leave it up for the next person.
+    if (next !== current) $('result').replaceChildren();
+    current = next;
     $('user').value = current.email;
     $('who').textContent = describe(current);
     return busy(refresh);
