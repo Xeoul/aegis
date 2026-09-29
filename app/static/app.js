@@ -30,7 +30,8 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 const $ = (sel) => document.querySelector(sel);
-const parseTs = (ts) => new Date(ts.endsWith("Z") ? ts : ts + "Z");
+// API timestamps are UTC; most are naive ("...T12:00:00"), a few carry an offset.
+const parseTs = (ts) => new Date(/(Z|[+-]\d\d:\d\d)$/i.test(ts) ? ts : ts + "Z");
 const fmt = (ts) => (ts ? parseTs(ts).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
 const who = (id) => (id == null ? "system" : state.users.get(id)?.name ?? `user ${id}`);
 
@@ -346,7 +347,24 @@ async function downloadCsv(ev) {
 
 // --- Boot ----------------------------------------------------------------------
 
+async function loadMeta() {
+  try {
+    const m = await api("/meta");
+    if (!m.demo_mode) return;
+    const parts = [h("b", {}, "Demo sandbox"), h("span", {}, "fictional company, people and data")];
+    if (m.next_reset_at) {
+      const mins = Math.max(0, Math.round((parseTs(m.next_reset_at) - Date.now()) / 60e3));
+      parts.push(h("span", {}, `resets in ${mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`}`));
+    }
+    parts.push(h("span", {}, m.parser === "anthropic" ? "requests parsed by Claude" : "keyword parser (no LLM key)"));
+    parts.push(h("span", {}, "production sign-in is your IdP via OIDC"));
+    $("#banner").replaceChildren(...parts);
+    $("#banner").hidden = false;
+  } catch (_) { /* banner is informational */ }
+}
+
 try { applyTheme(localStorage.getItem("aegis-theme")); } catch (_) { /* storage unavailable */ }
+loadMeta();
 $("#personas").replaceChildren(...PERSONAS.map(([email, name, role]) =>
   h("button", { class: "persona", type: "button", onclick: () => login(email) },
     h("span", {}, name), h("span", { class: "role" }, role, " ", h("span", { class: "arrow" }, "→")))));

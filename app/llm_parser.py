@@ -127,6 +127,14 @@ def parse_access_request(text: str, resource_catalog: Sequence[str]) -> ParseRes
         return ParseResult(fallback, "heuristic (llm fallback)")
 
 
+def active_backend() -> str:
+    """Which parser handles requests right now: "anthropic" or "heuristic"."""
+    mode = os.getenv("AEGIS_LLM_MODE", "auto").lower()
+    if mode == "heuristic" or (mode == "auto" and not _has_api_credentials()):
+        return "heuristic"
+    return "anthropic"
+
+
 def _has_api_credentials() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
 

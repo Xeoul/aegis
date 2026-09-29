@@ -10,6 +10,8 @@ approver, and approved grants become short-lived AWS credentials scoped to exact
 approved. Access expires on its own, every step is written to a tamper-evident audit trail,
 and detection rules flag abuse.
 
+**Live demo:** _add your Render URL here_ · [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Xeoul/aegis-jit)
+
 ![Approval queue](docs/img/approvals.png)
 
 ## What it demonstrates
@@ -61,6 +63,9 @@ evaluates those fields against real user and resource attributes from the databa
 
 ## Quick start
 
+The easiest option is the hosted demo: click **Deploy to Render** above (free, no Docker needed,
+see [docs/DEPLOY.md](docs/DEPLOY.md)).
+
 With Docker:
 
 ```bash
@@ -108,6 +113,8 @@ with Claude.
   the AWS broker, audit chain, detection rules and configuration
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): STRIDE analysis, trust boundaries, known limitations
 - [docs/CONTROLS.md](docs/CONTROLS.md): NIST 800-53 / SOC 2 / ISO 27001 control mapping
+- [docs/DEPLOY.md](docs/DEPLOY.md): one-click public demo on Render, and what changes for production
+- [docs/INTERVIEW.md](docs/INTERVIEW.md): 60-second pitch, 5-minute demo script, likely questions
 
 ## Project layout
 
@@ -128,7 +135,7 @@ app/
   static/          Dashboard (vanilla JS, strict CSP)
 policies/          Cedar schema, policies, role attributes
 scripts/           LocalStack bootstrap
-tests/             104 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+tests/             110 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

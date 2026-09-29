@@ -85,7 +85,21 @@ def run_sweep() -> None:
     prune_cloud_revocations()
 
 
-def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
+DEMO_RESET_JOB_ID = "demo-reset"
+last_demo_reset: datetime | None = None
+
+
+def reset_demo_data() -> None:
+    """Wipe and re-seed the database (public demo mode only)."""
+    global last_demo_reset
+    from seed_data import seed  # repo-root script; imported lazily so the app doesn't depend on it
+
+    seed(reset=True)
+    last_demo_reset = datetime.now(UTC)
+    logger.info("Demo data reset")
+
+
+def create_scheduler(interval_seconds: int = 60, demo_reset_minutes: int | None = None) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
         run_sweep,
@@ -96,4 +110,8 @@ def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
         coalesce=True,
         next_run_time=datetime.now(UTC),  # also sweep once at startup
     )
+    if demo_reset_minutes:
+        global last_demo_reset
+        last_demo_reset = datetime.now(UTC)  # the entrypoint seeded the data just before startup
+        scheduler.add_job(reset_demo_data, "interval", minutes=demo_reset_minutes, id=DEMO_RESET_JOB_ID, coalesce=True)
     return scheduler

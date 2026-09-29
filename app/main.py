@@ -3,13 +3,15 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import siem
+from app import credentials, llm_parser, siem
+from app import scheduler as scheduler_module
 from app.config import settings
 from app.database import init_db
 from app.routers import access, approvals, audit, auth, governance, users
@@ -30,7 +32,9 @@ async def lifespan(_: FastAPI):
         )
     scheduler = None
     if settings.scheduler_enabled:
-        scheduler = create_scheduler(settings.revocation_interval_seconds)
+        scheduler = create_scheduler(
+            settings.revocation_interval_seconds, settings.demo_reset_minutes if settings.demo_mode else None
+        )
         scheduler.start()
     yield
     if scheduler:
@@ -76,6 +80,22 @@ app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=Tr
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/meta", tags=["meta"])
+def meta() -> dict[str, object]:
+    """Public deployment facts the dashboard shows (no secrets)."""
+    next_reset = None
+    if settings.demo_mode and scheduler_module.last_demo_reset is not None:
+        next_reset = scheduler_module.last_demo_reset + timedelta(minutes=settings.demo_reset_minutes)
+    return {
+        "demo_mode": settings.demo_mode,
+        "auth_mode": settings.auth_mode,
+        "parser": llm_parser.active_backend(),
+        "credential_broker": "aws" if credentials.enabled() else "none",
+        "demo_reset_minutes": settings.demo_reset_minutes if settings.demo_mode else None,
+        "next_reset_at": next_reset.isoformat() if next_reset else None,
+    }
 
 
 for module in (auth, users, access, approvals, audit, governance):

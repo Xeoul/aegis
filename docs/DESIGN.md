@@ -218,4 +218,5 @@ SIEM copy can be checked against the source.
 | `AEGIS_AWS_ACCOUNT_ID` | `000000000000` (LocalStack), used by `seed_data.py` to build ARNs |
 | `AEGIS_SIEM_LOG_FILE` | unset (a file path, or `stdout`) |
 | `AEGIS_BUSINESS_HOURS_UTC`, `AEGIS_BUSINESS_DAYS` | `07-19`, `0-4` (Mon–Fri) for the off-hours rule |
+| `AEGIS_DEMO_MODE` | `false` (`true`: sandbox banner, and data reset every `AEGIS_DEMO_RESET_MINUTES`, default 180) |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |

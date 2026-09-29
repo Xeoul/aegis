@@ -177,6 +177,13 @@ td.mono, td .mono { color: var(--ink-2); }
 .kpi .v.bad { color: var(--bad); }
 .kpi .l { font: 11px var(--mono); color: var(--muted); margin-top: 8px; letter-spacing: .04em; }
 
+/* Demo sandbox banner */
+.banner { position: sticky; top: 0; z-index: 5; display: flex; justify-content: center; gap: 8px 18px; flex-wrap: wrap;
+  padding: 8px 16px; background: var(--inv-bg); color: var(--inv-ink); font: 11.5px/1.4 var(--mono); letter-spacing: .02em; }
+.banner b { font-weight: 600; }
+.banner span { opacity: .75; }
+.banner:not([hidden]) ~ .shell .rail { top: 33px; height: calc(100vh - 33px); }
+
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 8px); background: var(--inv-bg); color: var(--inv-ink);
   padding: 10px 14px; border-radius: 6px; font: 12.5px var(--mono); opacity: 0; transition: opacity .18s, transform .18s;
   pointer-events: none; max-width: calc(100% - 32px); }

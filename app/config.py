@@ -27,6 +27,10 @@ class Settings:
     # database access cannot recompute the chain after editing history.
     audit_key: str = field(default_factory=lambda: os.getenv("AEGIS_AUDIT_KEY", ""))
     scheduler_enabled: bool = field(default_factory=lambda: _env_bool("AEGIS_SCHEDULER_ENABLED", True))
+    # Public demo: shows a sandbox banner and periodically wipes and re-seeds the database so
+    # every visitor starts from the same clean story.
+    demo_mode: bool = field(default_factory=lambda: _env_bool("AEGIS_DEMO_MODE", False))
+    demo_reset_minutes: int = field(default_factory=lambda: int(os.getenv("AEGIS_DEMO_RESET_MINUTES", "180")))
     revocation_interval_seconds: int = field(
         default_factory=lambda: int(os.getenv("AEGIS_REVOCATION_INTERVAL_SECONDS", "60"))
     )
