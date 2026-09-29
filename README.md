@@ -6,6 +6,9 @@ ALLOW or DENY, and a background scheduler revokes grants when they expire.
 
 Built with FastAPI, SQLite (SQLAlchemy 2), Pydantic v2 and APScheduler.
 
+**Live demo: https://xeoul.github.io/aegis/**. Try it without installing anything. It runs this
+exact code in your browser (see [Live demo](#live-demo)).
+
 ## Quick start
 
 ```bash
@@ -120,6 +123,7 @@ app/
   scheduler.py   APScheduler sweep: expired grants -> REVOKED, stale approvals -> EXPIRED
   main.py        FastAPI app, lifespan (starts and stops the scheduler), router wiring
 seed_data.py     Mock users and resources (idempotent; --reset to wipe)
+demo/            The in-browser live demo (page, bridge.py, build.sh)
 tests/           pytest suite (runs offline)
 ```
 
@@ -170,6 +174,33 @@ Granted durations are capped per sensitivity level: 72h public, 24h internal, 8h
 | `AEGIS_TOKEN_TTL_MINUTES` | `60` |
 | `AEGIS_OIDC_ISSUER`, `AEGIS_OIDC_AUDIENCE`, `AEGIS_OIDC_JWKS_URL` | required in `oidc` mode (audience defaults to `aegis-jit`) |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
+
+## Live demo
+
+`demo/` publishes the app to GitHub Pages as a single page that runs the real API in the
+browser: [Pyodide](https://pyodide.org) (Python compiled to WebAssembly) loads `app/` and
+`seed_data.py`, and the page calls the endpoints through `demo/bridge.py`, which hands each
+request straight to the FastAPI app. Tokens, the policy engine, approvals, grants and the
+audit chain all go through the same code as the server.
+
+For the browser, `bridge.py` changes a few things:
+
+- **Parsing:** requests use the heuristic parser. A public page can't hold an API key.
+- **Threads:** endpoints run inline on the event loop, not in a thread pool.
+- **Scheduler:** the page runs the scheduler's sweep every minute itself; APScheduler isn't loaded.
+- **Demo clock:** a clock you can skip forward, so expiry can be shown without waiting.
+- **Tampering:** a button that edits an audit row directly in SQLite, so the chain check has something to catch.
+
+Everything lives in a SQLite file in the page's memory and resets on reload.
+
+```bash
+demo/build.sh                       # builds _site/: the page, the source it runs, the wheels it installs
+python -m http.server -d _site      # then open http://localhost:8000
+```
+
+`.github/workflows/pages.yml` runs the tests and publishes `_site` to the `gh-pages` branch
+on every push to `main`. `tests/test_demo_bridge.py` walks the demo's flows through the
+bridge in CI.
 
 ## Tests
 

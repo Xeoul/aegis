@@ -1,0 +1,46 @@
+# Publishes the live demo to GitHub Pages at https://xeoul.github.io/aegis/ on every
+# push to main, after the tests pass. demo/build.sh assembles the static site: the page,
+# the Aegis source it runs in the browser, and the Python wheels it installs.
+# One-time setup, if the site doesn't appear after the first run:
+# Settings -> Pages -> Build and deployment -> Source: Deploy from a branch
+# -> gh-pages / (root).
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: Build the demo site
+        run: demo/build.sh _site
+
+      - name: Publish to the gh-pages branch
+        working-directory: _site
+        run: |
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Deploy ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
