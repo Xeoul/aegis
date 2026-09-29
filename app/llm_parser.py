@@ -184,7 +184,11 @@ _ACTION_KEYWORDS: list[tuple[Action, tuple[str, ...]]] = [
     ("write", ("write", "modify", "update", "edit", "change", "deploy", "push", "patch", "insert", "upload")),
 ]
 
-_DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h|days?|d)\b", re.IGNORECASE)
+# The lookbehind stops a match starting in the middle of a digit run, and the bounded
+# quantifiers keep matching linear, so a long run of digits can't cause ReDoS.
+_DURATION_RE = re.compile(
+    r"(?<![\d.])(\d{1,6}(?:\.\d{1,3})?)\s{0,3}(minutes?|mins?|hours?|hrs?|h|days?|d)\b", re.IGNORECASE
+)
 _WORD_DURATIONS = [
     (re.compile(r"\b(?:an|one) hour\b", re.I), 1),
     (re.compile(r"\bhalf an hour\b", re.I), 1),
