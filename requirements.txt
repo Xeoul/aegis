@@ -5,5 +5,5 @@ pydantic[email]>=2.7
 apscheduler>=3.10,<4
 anthropic>=1.9
 pyjwt[crypto]>=2.8
-cedarpy>=4.0
+cedarpy>=4.12.1
 boto3>=1.34
