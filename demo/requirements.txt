@@ -6,4 +6,4 @@ fastapi==0.115.14
 starlette==0.46.2
 email-validator==2.2.0
 dnspython==2.7.0
-PyJWT==2.10.1
+PyJWT==2.15.0
