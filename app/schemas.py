@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AuditEvent, RequestStatus, SensitivityLevel
+from app.models import AlertSeverity, AlertStatus, AuditEvent, RequestStatus, SensitivityLevel
 
 Action = Literal["read", "write", "delete", "admin"]
 Decision = Literal["ALLOW", "DENY"]
@@ -223,3 +223,61 @@ class AuditVerificationOut(BaseModel):
     head_hash: str
     first_invalid_id: int | None
     reason: str | None
+
+
+# --- Governance --------------------------------------------------------------
+
+
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    rule: str
+    severity: AlertSeverity
+    status: AlertStatus
+    user_id: int
+    request_id: int | None
+    detail: str
+    resolved_by_id: int | None
+    resolved_at: datetime | None
+    resolution_note: str | None
+
+
+class AlertResolveIn(BaseModel):
+    note: str = Field(min_length=3, max_length=1000)
+    false_positive: bool = False
+
+
+class UserAccessReview(BaseModel):
+    user_id: int
+    email: str
+    department: str
+    role: str
+    manager_id: int | None
+    is_active: bool
+    active_grants: list[str]
+    resources_accessed: list[str]
+    grants_in_period: int
+    denied_in_period: int
+    break_glass_in_period: int
+    break_glass_unreviewed: int
+    approvals_given: int
+    open_alerts: int
+    recommendation: str
+
+
+class ControlChecks(BaseModel):
+    """Evidence that the preventive controls held during the period (all should be 0 / true)."""
+
+    self_approvals: int
+    active_grants_for_inactive_users: int
+    unreviewed_break_glass: int
+    audit_chain_valid: bool
+
+
+class AccessReviewReport(BaseModel):
+    generated_at: datetime
+    period_days: int
+    control_checks: ControlChecks
+    users: list[UserAccessReview]

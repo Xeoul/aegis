@@ -56,6 +56,10 @@ curl -s localhost:8000/audit-logs/verify -H "Authorization: Bearer $GRACE"
 | `GET` | `/active-grants` | authenticated | Your unexpired grants (oversight roles see all, `?user_id=`) |
 | `GET` | `/audit-logs` | auditor, security engineer, admin | Hash-chained history, newest first (`?user_id=`, `?event=`, `?limit=`) |
 | `GET` | `/audit-logs/verify` | auditor, security engineer, admin | Recompute the chain and report the first tampered entry |
+| `GET` | `/audit-logs/export` | auditor, security engineer, admin | OCSF-style NDJSON for a SIEM (`?after_id=` cursor) |
+| `GET` | `/alerts` | auditor, security engineer, admin | Detection findings (`?status=`, `?severity=`) |
+| `POST` | `/alerts/{id}/resolve` | security engineer (not about themselves) | Close an alert (`{note, false_positive}`) |
+| `GET` | `/reports/access-review` | auditor, security engineer, admin | User access review with control checks (`?days=`, `?format=csv`) |
 
 All timestamps are UTC.
 
@@ -145,7 +149,9 @@ app/
   audit.py       HMAC hash-chained audit writer and verifier
   workflow.py    Approver eligibility, activation, break-glass, revocation, leaver/mover handling
   credentials.py AWS STS broker: scoped AssumeRole, session revocation, pruning
-  routers/       HTTP endpoints: auth, users, access, approvals, audit
+  detection.py   Detection rules that raise security alerts
+  siem.py        OCSF-style event mapping, JSON-lines push stream
+  routers/       HTTP endpoints: auth, users, access, approvals, audit, governance
   database.py    SQLite engine, session factory, get_db dependency
   models.py      User, Resource, AccessRequest, AuditLog
   schemas.py     Pydantic I/O models: AccessRequestIn, ParsedPolicy, ABACPolicy, ...
@@ -224,6 +230,36 @@ The LLM only turns text into fields. It never decides.
 `tests/test_prompt_injection.py` simulates a fully hijacked LLM that returns attacker-chosen
 fields and checks that policy still holds.
 
+## Detection and governance
+
+**Detection rules** (`app/detection.py`) run after every request, in the same transaction.
+Each rule has a one-hour cooldown per user.
+
+| Rule | Severity | Fires when |
+|---|---|---|
+| `prompt-injection` | high | The request text matched manipulation patterns |
+| `break-glass-used` | high | Emergency access was taken without approval |
+| `privilege-escalation-attempt` | medium | A request was denied by the `clearance` or `privileged-actions` guardrail |
+| `repeated-denials` | medium | 3 or more denials within an hour (possible probing) |
+| `sensitive-access-burst` | medium | Requests for 5 or more different confidential/restricted resources within 24h |
+| `off-hours-sensitive-access` | low | A confidential/restricted request outside business hours |
+
+Security engineers triage alerts, marking them resolved or false positive. They cannot close
+an alert about themselves, and auditors can view alerts but not close them.
+
+**Access review.** `GET /reports/access-review` supports periodic certification, as SOX, SOC 2
+and ISO 27001 require. For each user it lists active grants, resources used, denials,
+break-glass use, approvals they gave, open alerts and a recommendation (`CERTIFY`,
+`INVESTIGATE`, `REVOKE`, `NO ACTION`). It also reports **control checks**: self-approvals,
+active grants held by deactivated users, unreviewed break-glass, and whether the audit chain is
+intact. CSV export is available for spreadsheets.
+
+**SIEM integration.** Audit events map to OCSF-style JSON (Account Change 3001, Authorize
+Session 3003, Detection Finding 2004). They can be pushed as JSON lines
+(`AEGIS_SIEM_LOG_FILE=/path` or `stdout`, for Splunk UF, Filebeat or Fluent Bit) or pulled from
+`/audit-logs/export?after_id=N`. Each event carries its chain hash in `metadata.uid`, so the
+SIEM copy can be checked against the source.
+
 ## Configuration
 
 | Variable | Default |
@@ -240,6 +276,8 @@ fields and checks that policy still holds.
 | `AEGIS_CREDENTIAL_BROKER` | `none` (`aws` to issue STS credentials) |
 | `AEGIS_AWS_MAX_SESSION_SECONDS` | `3600` (must not exceed the roles' `MaxSessionDuration`) |
 | `AEGIS_AWS_ACCOUNT_ID` | `000000000000` (LocalStack), used by `seed_data.py` to build ARNs |
+| `AEGIS_SIEM_LOG_FILE` | unset (a file path, or `stdout`) |
+| `AEGIS_BUSINESS_HOURS_UTC`, `AEGIS_BUSINESS_DAYS` | `07-19`, `0-4` (Mon–Fri) for the off-hours rule |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
 
 ## Tests

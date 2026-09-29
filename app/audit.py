@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import siem
 from app.config import settings
 from app.database import utcnow
 from app.models import AuditEvent, AuditLog
@@ -59,14 +60,17 @@ def commit(db: Session) -> None:
     if not pending:
         db.commit()
         return
+    written = []
     with _chain_lock:
         prev = db.scalar(select(AuditLog.hash).order_by(AuditLog.id.desc()).limit(1)) or GENESIS_HASH
         for fields in pending:
             entry = AuditLog(timestamp=utcnow(), prev_hash=prev, **fields)
             entry.hash = compute_hash(prev, entry)
             db.add(entry)
+            written.append(entry)
             prev = entry.hash
         db.commit()
+    siem.emit(written)  # only after the commit, so the SIEM never sees events that rolled back
 
 
 def _canonical(entry: AuditLog) -> bytes:

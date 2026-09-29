@@ -43,9 +43,23 @@ class AuditEvent(str, enum.Enum):
     CREDENTIALS_ISSUED = "CREDENTIALS_ISSUED"
     CLOUD_SESSIONS_REVOKED = "CLOUD_SESSIONS_REVOKED"
     CLOUD_REVOCATION_FAILED = "CLOUD_REVOCATION_FAILED"
+    ALERT_RAISED = "ALERT_RAISED"
+    ALERT_RESOLVED = "ALERT_RESOLVED"
     USER_CREATED = "USER_CREATED"
     USER_UPDATED = "USER_UPDATED"
     USER_DEACTIVATED = "USER_DEACTIVATED"
+
+
+class AlertSeverity(str, enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AlertStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
 
 
 class User(Base):
@@ -148,3 +162,23 @@ class AuditLog(Base):
     detail: Mapped[str] = mapped_column(Text, default="")
     prev_hash: Mapped[str] = mapped_column(String(64), unique=True)
     hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+
+class Alert(Base):
+    """A detection-rule finding for the security team to triage."""
+
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    rule: Mapped[str] = mapped_column(String(60), index=True)
+    severity: Mapped[AlertSeverity] = mapped_column(Enum(AlertSeverity, native_enum=False, length=10))
+    status: Mapped[AlertStatus] = mapped_column(
+        Enum(AlertStatus, native_enum=False, length=20), default=AlertStatus.OPEN, index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("access_requests.id"), nullable=True)
+    detail: Mapped[str] = mapped_column(Text)
+    resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)

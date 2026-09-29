@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials, workflow
+from app import audit, credentials, detection, workflow
 from app.auth import get_current_user, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
@@ -86,6 +86,7 @@ def request_access(
         workflow.start_approval(db, record)
     else:
         workflow.activate(db, record, user.id, " ".join(result.reasons))
+    detection.scan(db, record, resource)
     audit.commit(db)
 
     return AccessDecisionOut(

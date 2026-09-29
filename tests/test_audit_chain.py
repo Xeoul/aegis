@@ -17,8 +17,8 @@ def _verify(client, auth):
 def test_chain_is_valid_and_linked(client, auth):
     _populate(client, auth)
     result = _verify(client, auth)
-    assert result["valid"] is True and result["entries_checked"] == 6
     logs = client.get("/audit-logs", headers=auth(GRACE)).json()[::-1]
+    assert result["valid"] is True and result["entries_checked"] == len(logs) >= 6
     assert logs[0]["prev_hash"] == "0" * 64
     assert all(b["prev_hash"] == a["hash"] for a, b in zip(logs, logs[1:], strict=False))
 

@@ -8,7 +8,8 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.database import init_db
-from app.routers import access, approvals, audit, auth, users
+from app import siem
+from app.routers import access, approvals, audit, auth, governance, users
 from app.scheduler import create_scheduler
 
 logging.basicConfig(level=os.getenv("AEGIS_LOG_LEVEL", "INFO"))
@@ -18,6 +19,7 @@ logger = logging.getLogger("aegis")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    siem.configure()
     if settings.auth_mode == "dev":
         logger.warning(
             "AEGIS_AUTH_MODE=dev: POST /auth/dev-token issues tokens for any provisioned user. "
@@ -46,5 +48,5 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-for module in (auth, users, access, approvals, audit):
+for module in (auth, users, access, approvals, audit, governance):
     app.include_router(module.router)
