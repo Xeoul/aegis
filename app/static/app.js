@@ -3,17 +3,18 @@
 "use strict";
 
 const PERSONAS = [
-  ["alice.chen@aegis.example", "Alice Chen", "Engineer · Engineering"],
-  ["bob.martinez@aegis.example", "Bob Martinez", "SRE · Engineering"],
-  ["maya.torres@aegis.example", "Maya Torres", "Manager · Engineering (approver)"],
-  ["eve.johansson@aegis.example", "Eve Johansson", "Security engineer (approver, triage)"],
-  ["grace.kim@aegis.example", "Grace Kim", "Auditor · Compliance"],
-  ["frank.lee@aegis.example", "Frank Lee", "Intern · Marketing"],
-  ["iris.novak@aegis.example", "Iris Novak", "Identity admin · IT"],
+  ["alice.chen@aegis.example", "Alice Chen", "engineer · eng"],
+  ["bob.martinez@aegis.example", "Bob Martinez", "sre · eng"],
+  ["maya.torres@aegis.example", "Maya Torres", "manager · eng"],
+  ["eve.johansson@aegis.example", "Eve Johansson", "security"],
+  ["grace.kim@aegis.example", "Grace Kim", "auditor"],
+  ["frank.lee@aegis.example", "Frank Lee", "intern · mktg"],
+  ["iris.novak@aegis.example", "Iris Novak", "identity admin"],
 ];
 const OVERSIGHT = new Set(["auditor", "security engineer"]);
-const state = { token: null, me: null, users: new Map() };
-const who = (id) => (id == null ? "system" : state.users.get(id)?.name ?? `user #${id}`);
+const state = { token: null, me: null, users: new Map(), tab: "request" };
+
+// --- DOM helpers ---------------------------------------------------------------
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -29,15 +30,42 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 const $ = (sel) => document.querySelector(sel);
-const fmt = (ts) => (ts ? new Date(ts.endsWith("Z") ? ts : ts + "Z").toLocaleString() : "-");
+const parseTs = (ts) => new Date(ts.endsWith("Z") ? ts : ts + "Z");
+const fmt = (ts) => (ts ? parseTs(ts).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
+const who = (id) => (id == null ? "system" : state.users.get(id)?.name ?? `user ${id}`);
+
+const TONE = {
+  ACTIVE: "ok", ALLOW: "ok", RESOLVED: "ok", PENDING_APPROVAL: "warn", OPEN: "warn",
+  DENIED: "bad", DENY: "bad", REJECTED: "bad", high: "bad", medium: "warn", low: "",
+};
+const st = (text, extra = "") => h("span", { class: `st ${TONE[text] ?? ""} ${extra}` }, text.replace(/_/g, " "));
+const empty = (title, body) => h("div", { class: "empty" }, h("strong", {}, title), body);
 
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 3200);
 }
+
+// An inline prompt that replaces window.prompt: renders an input under `anchor`.
+function ask(anchor, { placeholder, submit, tone = "primary" }, onSubmit) {
+  anchor.parentElement.querySelector(".ask")?.remove();
+  const input = h("input", { placeholder, required: true, minlength: "3", "aria-label": placeholder });
+  const form = h("form", { class: "ask" }, input,
+    h("button", { class: tone, type: "submit" }, submit),
+    h("button", { class: "link", type: "button", onclick: () => form.remove() }, "cancel"));
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    form.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    try { await onSubmit(input.value.trim()); } catch (e) { toast(e.message); form.querySelectorAll("button").forEach((b) => { b.disabled = false; }); }
+  });
+  anchor.after(form);
+  input.focus();
+}
+
+// --- API -----------------------------------------------------------------------
 
 async function api(path, opts = {}) {
   const headers = { "content-type": "application/json" };
@@ -54,12 +82,21 @@ async function api(path, opts = {}) {
 }
 const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data || {}) });
 
-const STATUS_CLASS = { ACTIVE: "ok", ALLOW: "ok", RESOLVED: "ok", PENDING_APPROVAL: "warn", OPEN: "warn",
-  DENIED: "bad", DENY: "bad", REJECTED: "bad", REVOKED: "", EXPIRED: "", high: "bad", medium: "warn", low: "" };
-const badge = (text) => h("span", { class: `badge ${STATUS_CLASS[text] ?? ""}` }, text);
-const empty = (text) => h("div", { class: "empty" }, text);
+// --- Theme ---------------------------------------------------------------------
 
-// --- Auth -----------------------------------------------------------------------
+function applyTheme(theme) {
+  if (theme) document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = current === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try { localStorage.setItem("aegis-theme", next); } catch (_) { /* storage unavailable */ }
+}
+
+// --- Auth ----------------------------------------------------------------------
 
 async function login(email) {
   $("#login-error").textContent = "";
@@ -76,30 +113,39 @@ async function login(email) {
 function logout() {
   state.token = null; state.me = null;
   try { sessionStorage.removeItem("aegis-token"); } catch (_) { /* ignore */ }
-  $("#app").hidden = true; $("#login").hidden = false; $("#whoami").replaceChildren();
+  $("#app").hidden = true; $("#login").hidden = false;
 }
 
-function isOversight(me) { return me.is_admin || OVERSIGHT.has(me.role.toLowerCase()); }
+const isOversight = (me) => me.is_admin || OVERSIGHT.has(me.role.toLowerCase());
 
 async function start() {
   const [me, users] = await Promise.all([api("/me"), api("/users")]);
   state.me = me;
   state.users = new Map(users.map((u) => [u.id, u]));
-  $("#whoami").replaceChildren(...[
-    h("span", {}, h("strong", {}, me.name), " ", h("span", { class: "muted" }, `${me.role} · ${me.department}`)),
-    me.is_admin ? badge("admin") : null,
-    h("button", { class: "secondary", onclick: logout }, "Sign out"),
-  ].filter(Boolean));
-  const tabs = [["request", "Request access"], ["mine", "My access"], ["approvals", "Approvals"]];
-  if (isOversight(me)) tabs.push(["alerts", "Alerts"], ["audit", "Audit"], ["review", "Access review"]);
+  $("#whoami").replaceChildren(h("strong", {}, me.name), h("span", {}, `${me.role} · ${me.department}`.toLowerCase()));
+  const tabs = [["request", "Request"], ["mine", "My access"], ["approvals", "Approvals"]];
+  if (isOversight(me)) tabs.push(["alerts", "Alerts"], ["audit", "Audit log"], ["review", "Review"]);
   $("#tabs").replaceChildren(...tabs.map(([id, label]) =>
-    h("button", { role: "tab", "data-tab": id, onclick: () => show(id) }, label)));
+    h("button", { role: "tab", "data-tab": id, onclick: () => show(id) }, h("span", {}, label), h("span", { class: "count", hidden: true }))));
   $("#login").hidden = true; $("#app").hidden = false;
   show("request");
+  refreshCounts();
+}
+
+async function refreshCounts() {
+  const setCount = (tab, n) => {
+    const el = document.querySelector(`#tabs [data-tab="${tab}"] .count`);
+    if (el) { el.textContent = String(n); el.hidden = !n; }
+  };
+  try {
+    setCount("approvals", (await api("/approvals")).length);
+    if (isOversight(state.me)) setCount("alerts", (await api("/alerts")).length);
+  } catch (_) { /* counts are cosmetic */ }
 }
 
 const LOADERS = { mine: loadMine, approvals: loadApprovals, alerts: loadAlerts, audit: loadAudit, review: loadReview };
 function show(tab) {
+  state.tab = tab;
   document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   document.querySelectorAll(".panel").forEach((p) => { p.hidden = p.dataset.tab !== tab; });
   if (LOADERS[tab]) LOADERS[tab]().catch((e) => toast(e.message));
@@ -107,56 +153,96 @@ function show(tab) {
 
 // --- Request -------------------------------------------------------------------
 
+function reasonRow(text) {
+  const m = /^\[([\w-]+)\]\s*(.*)$/.exec(text);
+  return h("li", {}, h("span", { class: "pid" }, m ? m[1] : "note"), h("span", {}, m ? m[2] : text));
+}
+
 async function submitRequest(ev) {
   ev.preventDefault();
   const btn = ev.submitter; btn.disabled = true;
   try {
     const d = await post("/request-access", { request_text: $("#request-text").value, break_glass: $("#break-glass").checked });
-    $("#decision").replaceChildren(
-      h("div", { class: "item" },
-        h("div", { class: "row" }, badge(d.decision), badge(d.status), d.break_glass ? badge("break-glass") : null,
-          ...d.risk_flags.map((f) => h("span", { class: "badge bad" }, `flag: ${f}`)),
-          h("span", { class: "muted" }, `request #${d.request_id} · parser: ${d.parser}`)),
-        h("ul", { class: "reasons" }, d.reasons.map((r) => h("li", {}, r))),
-        h("details", {}, h("summary", { class: "muted" }, "Resolved ABAC policy"),
-          h("pre", {}, JSON.stringify(d.policy, null, 2)))));
+    const tone = d.decision === "DENY" ? "bad" : d.status === "PENDING_APPROVAL" ? "warn" : "ok";
+    const word = d.decision === "DENY" ? "denied" : d.status === "PENDING_APPROVAL" ? "pending" : "granted";
+    const fact = (k, v) => h("div", { class: "fact" }, h("dt", {}, k), h("dd", {}, v));
+    $("#decision").replaceChildren(h("div", { class: "verdict" },
+      h("div", { class: "verdict-line" },
+        h("span", { class: `verdict-word ${tone}` }, word),
+        h("span", { class: "muted" }, {
+          PENDING_APPROVAL: "awaiting a second approver",
+          ACTIVE: "access is live",
+          DENIED: `${d.reasons.length} guardrail${d.reasons.length === 1 ? "" : "s"} blocked this`,
+        }[d.status] ?? d.status.toLowerCase()),
+        d.break_glass ? h("span", { class: "tag bad" }, "break-glass") : null,
+        ...d.risk_flags.map((f) => h("span", { class: "tag bad" }, `flag:${f}`))),
+      h("dl", { class: "facts" },
+        fact("resource", d.parsed.resource),
+        fact("action", d.parsed.action),
+        fact("sensitivity", d.policy.resource.sensitivity_level ?? "—"),
+        fact("duration", d.decision === "DENY" ? "—" : `${d.policy.conditions.duration_hours}h`),
+        fact("request", `#${d.request_id}`)),
+      h("ul", { class: "reasons" }, d.reasons.map(reasonRow)),
+      h("details", {}, h("summary", {}, `policy object · parsed by ${d.parser}`),
+        h("pre", {}, JSON.stringify(d.policy, null, 2)))));
     $("#request-text").value = ""; $("#break-glass").checked = false;
+    refreshCounts();
   } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
 
 // --- My access -----------------------------------------------------------------
 
+function clock(grant) {
+  const total = Math.max(1, grant.duration_hours) * 3600e3;
+  const fill = h("i");
+  const bar = h("div", { class: "bar" }, fill);
+  const left = h("b");
+  const el = h("div", { class: "clock" }, bar, h("div", { class: "clock-text" }, h("span", {}, left, " remaining"), h("span", {}, `until ${fmt(grant.expires_at)}`)));
+  const tick = () => {
+    const ms = Math.max(0, parseTs(grant.expires_at) - Date.now());
+    const m = Math.round(ms / 60e3);
+    left.textContent = m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+    fill.style.width = `${Math.min(100, (ms / total) * 100)}%`;
+    bar.classList.toggle("low", ms / total < 0.2);
+  };
+  tick();
+  el.dataset.clock = "1";
+  el.tick = tick;
+  return el;
+}
+setInterval(() => document.querySelectorAll("[data-clock]").forEach((c) => c.tick?.()), 30e3);
+
 async function loadMine() {
   const [grants, requests, resources] = await Promise.all([api("/active-grants"), api("/requests"), api("/resources")]);
   const aws = new Set(resources.filter((r) => r.aws_role_arn).map((r) => r.name));
-  $("#grants").replaceChildren(...(grants.length ? grants.map((g) => h("div", { class: "item" },
-    h("div", {}, h("strong", {}, `${g.action} on ${g.resource}`), " ", g.break_glass ? badge("break-glass") : null),
-    h("div", { class: "meta" }, `#${g.id} · expires ${fmt(g.expires_at)} · ${g.allow_reason}`),
-    h("div", { class: "actions" },
+  $("#grants").replaceChildren(h("div", { class: "rows" }, ...(grants.length ? grants.map((g) => {
+    const actions = h("div", { class: "actions" },
       aws.has(g.resource) && g.user_id === state.me.id
-        ? h("button", { class: "secondary", onclick: () => getCreds(g.id) }, "Get AWS credentials") : null,
-      h("button", { class: "danger", onclick: () => revoke(g.id) }, "Revoke")))) : [empty("No active grants. Zero standing privilege.")]));
-  $("#requests").replaceChildren(...(requests.length ? [h("div", { class: "table-wrap" }, h("table", {},
-    h("thead", {}, h("tr", {}, ["#", "Resource", "Action", "Status", "Submitted", "Reason"].map((c) => h("th", {}, c)))),
-    h("tbody", {}, requests.map((r) => h("tr", {}, h("td", {}, r.id), h("td", {}, r.resource), h("td", {}, r.action),
-      h("td", {}, badge(r.status)), h("td", {}, fmt(r.created_at)), h("td", {}, r.decision_comment || r.revoke_reason || r.allow_reason))))))]
-    : [empty("No requests yet.")]));
-}
-
-async function revoke(id) {
-  const reason = prompt("Reason for revoking this grant early?");
-  if (!reason) return;
-  try { await post(`/grants/${id}/revoke`, { reason }); toast("Grant revoked"); loadMine(); } catch (e) { toast(e.message); }
+        ? h("button", { class: "ghost", onclick: () => getCreds(g.id) }, "AWS credentials") : null,
+      h("button", { class: "danger", onclick: (ev) => ask(ev.currentTarget.parentElement, { placeholder: "Why end this early?", submit: "Revoke", tone: "danger" },
+        async (reason) => { await post(`/grants/${g.id}/revoke`, { reason }); toast("Revoked"); loadMine(); }) }, "Revoke"));
+    return h("div", { class: "item" },
+      h("div", { class: "item-top" },
+        h("div", { class: "item-title" }, g.action, " ", h("span", { class: "muted" }, "on"), " ", h("span", { class: "mono" }, g.resource)),
+        g.break_glass ? h("span", { class: "tag bad" }, "break-glass") : st("ACTIVE")),
+      h("div", { class: "meta" }, `#${g.id} · ${g.allow_reason}`),
+      clock(g), actions);
+  }) : [empty("Nothing active.", "Zero standing privilege: access exists only while you need it.")])));
+  $("#requests").replaceChildren(requests.length ? h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["#", "Resource", "Action", "Status", "Submitted"].map((c) => h("th", {}, c)))),
+    h("tbody", {}, requests.map((r) => h("tr", {}, h("td", { class: "mono" }, r.id), h("td", { class: "mono" }, r.resource),
+      h("td", {}, r.action), h("td", {}, st(r.status)), h("td", { class: "mono" }, fmt(r.created_at)))))))
+    : empty("No history yet.", ""));
 }
 
 async function getCreds(id) {
   try {
     const c = await post(`/grants/${id}/credentials`);
-    $("#creds").replaceChildren(h("div", { class: "card" },
-      h("h2", {}, "Temporary AWS credentials"),
-      h("p", { class: "muted" }, `Session ${c.session_name} on ${c.role_arn}, valid until ${fmt(c.expiration)}. Shown once; Aegis does not store them.`),
+    $("#creds").replaceChildren(h("div", { class: "verdict" },
+      h("p", { class: "label" }, "Temporary AWS credentials · shown once"),
+      h("div", { class: "meta" }, `${c.session_name} · ${c.role_arn} · expires ${fmt(c.expiration)}`),
       h("pre", {}, `export AWS_ACCESS_KEY_ID=${c.access_key_id}\nexport AWS_SECRET_ACCESS_KEY=${c.secret_access_key}\nexport AWS_SESSION_TOKEN=${c.session_token}`),
-      h("details", {}, h("summary", { class: "muted" }, "Session policy"), h("pre", {}, JSON.stringify(c.session_policy, null, 2)))));
+      h("details", {}, h("summary", {}, "session policy"), h("pre", {}, JSON.stringify(c.session_policy, null, 2)))));
   } catch (e) { toast(e.message); }
 }
 
@@ -164,77 +250,88 @@ async function getCreds(id) {
 
 async function loadApprovals() {
   const tasks = await api("/approvals");
-  $("#approvals").replaceChildren(...(tasks.length ? tasks.map(({ kind, eligibility, request: r }) => h("div", { class: "item" },
-    h("div", { class: "row" }, badge(kind === "approval" ? "PENDING_APPROVAL" : "break-glass review"),
-      h("strong", {}, `${r.action} on ${r.resource}`), h("span", { class: "muted" }, `${who(r.user_id)} · request #${r.id}`)),
-    h("div", {}, `“${r.request_text}”`),
-    h("div", { class: "meta" }, `${eligibility} · ${r.duration_hours}h · submitted ${fmt(r.created_at)}`,
-      r.risk_flags ? ` · flags: ${r.risk_flags}` : ""),
-    h("div", { class: "actions" }, kind === "approval"
-      ? [h("button", { onclick: () => decide(r.id, "approve") }, "Approve"), h("button", { class: "danger", onclick: () => decide(r.id, "reject") }, "Reject")]
-      : [h("button", { onclick: () => decide(r.id, "review") }, "Mark reviewed")])))
-    : [empty("Nothing waiting for you.")]));
-}
-
-async function decide(id, verb) {
-  const comment = prompt(`Comment for ${verb} (min 3 characters)`);
-  if (!comment) return;
-  try { const r = await post(`/requests/${id}/${verb}`, { comment }); toast(`Request #${id}: ${r.status}`); loadApprovals(); } catch (e) { toast(e.message); }
+  $("#approvals").replaceChildren(h("div", { class: "rows" }, ...(tasks.length ? tasks.map(({ kind, eligibility, request: r }) => {
+    const decide = (verb, tone, label) => (ev) => ask(ev.currentTarget.parentElement, { placeholder: "Comment for the audit trail", submit: label, tone },
+      async (comment) => { const res = await post(`/requests/${r.id}/${verb}`, { comment }); toast(`#${r.id} → ${res.status.toLowerCase()}`); loadApprovals(); refreshCounts(); });
+    return h("div", { class: "item" },
+      h("div", { class: "item-top" },
+        h("div", { class: "item-title" }, who(r.user_id), h("span", { class: "muted" }, " wants "), r.action, h("span", { class: "muted" }, " on "), h("span", { class: "mono" }, r.resource)),
+        kind === "approval" ? st("PENDING_APPROVAL", "pulse") : h("span", { class: "tag bad" }, "break-glass review")),
+      h("p", { class: "quote" }, `“${r.request_text}”`),
+      h("div", { class: "meta" }, `${r.duration_hours}h · ${eligibility}`, r.risk_flags ? ` · flags: ${r.risk_flags}` : ""),
+      h("div", { class: "actions" }, kind === "approval"
+        ? [h("button", { class: "primary", onclick: decide("approve", "primary", "Approve") }, "Approve"),
+          h("button", { class: "danger", onclick: decide("reject", "danger", "Reject") }, "Reject")]
+        : [h("button", { class: "primary", onclick: decide("review", "primary", "Mark reviewed") }, "Review")]));
+  }) : [empty("Inbox zero.", "Nothing needs your decision.")])));
 }
 
 // --- Oversight -----------------------------------------------------------------
 
 async function loadAlerts() {
   const alerts = await api("/alerts");
-  $("#alerts").replaceChildren(...(alerts.length ? alerts.map((a) => h("div", { class: "item" },
-    h("div", { class: "row" }, badge(a.severity), h("strong", {}, a.rule), h("span", { class: "muted" }, `${who(a.user_id)} · ${fmt(a.created_at)}`)),
-    h("div", {}, a.detail),
-    h("div", { class: "actions" },
-      h("button", { class: "secondary", onclick: () => resolveAlert(a.id, false) }, "Resolve"),
-      h("button", { class: "secondary", onclick: () => resolveAlert(a.id, true) }, "False positive"))))
-    : [empty("No open alerts.")]));
-}
-
-async function resolveAlert(id, falsePositive) {
-  const note = prompt("Resolution note");
-  if (!note) return;
-  try { await post(`/alerts/${id}/resolve`, { note, false_positive: falsePositive }); toast("Alert closed"); loadAlerts(); } catch (e) { toast(e.message); }
+  $("#alerts").replaceChildren(h("div", { class: "rows" }, ...(alerts.length ? alerts.map((a) => {
+    const close = (fp) => (ev) => ask(ev.currentTarget.parentElement, { placeholder: "Resolution note", submit: fp ? "Mark false positive" : "Resolve" },
+      async (note) => { await post(`/alerts/${a.id}/resolve`, { note, false_positive: fp }); toast("Alert closed"); loadAlerts(); refreshCounts(); });
+    return h("div", { class: "item" },
+      h("div", { class: "item-top" }, h("div", { class: "item-title mono" }, a.rule), st(a.severity)),
+      h("p", { class: "quote" }, a.detail),
+      h("div", { class: "meta" }, `${who(a.user_id)} · ${fmt(a.created_at)}`),
+      h("div", { class: "actions" },
+        h("button", { class: "ghost", onclick: close(false) }, "Resolve"),
+        h("button", { class: "ghost", onclick: close(true) }, "False positive")));
+  }) : [empty("All quiet.", "No open detections.")])));
 }
 
 async function loadAudit() {
   const logs = await api("/audit-logs?limit=50");
   $("#audit").replaceChildren(h("div", { class: "table-wrap" }, h("table", {},
-    h("thead", {}, h("tr", {}, ["#", "Time", "Event", "User", "Actor", "Resource", "Detail", "Hash"].map((c) => h("th", {}, c)))),
-    h("tbody", {}, logs.map((e) => h("tr", {}, h("td", {}, e.id), h("td", {}, fmt(e.timestamp)), h("td", {}, e.event),
-      h("td", {}, e.user_id == null ? "-" : who(e.user_id)), h("td", {}, who(e.actor_id)), h("td", {}, e.resource ?? "-"),
-      h("td", {}, e.detail), h("td", {}, h("code", { title: e.hash }, e.hash.slice(0, 10) + "…"))))))));
+    h("thead", {}, h("tr", {}, ["#", "Event", "Subject", "Actor", "Detail", "prev → hash"].map((c) => h("th", {}, c)))),
+    h("tbody", {}, logs.map((e) => h("tr", {},
+      h("td", { class: "mono" }, e.id),
+      h("td", { class: "mono" }, e.event.toLowerCase().replace(/_/g, " ")),
+      h("td", {}, e.user_id == null ? "—" : who(e.user_id)),
+      h("td", {}, who(e.actor_id)),
+      h("td", {}, e.detail),
+      h("td", { class: "hash", title: e.hash }, e.prev_hash.slice(0, 6), " → ", h("b", {}, e.hash.slice(0, 6)))))))));
 }
 
 async function verifyChain() {
   try {
     const v = await api("/audit-logs/verify");
-    $("#chain").replaceChildren(h("p", {},
-      h("span", { class: `badge ${v.valid ? "ok" : "bad"}` }, v.valid ? "VALID" : "TAMPERED"), " ",
-      v.valid ? `Chain intact: ${v.entries_checked} entries, head ${v.head_hash.slice(0, 16)}…`
-        : `Tampering detected at entry #${v.first_invalid_id}: ${v.reason}`));
+    const n = Math.min(v.entries_checked, 8);
+    const links = h("div", { class: `links ${v.valid ? "" : "broken"}` }, ...Array.from({ length: n }, () => h("i")));
+    $("#chain").replaceChildren(h("div", { class: "chain-status" }, links,
+      h("span", { class: `st ${v.valid ? "ok" : "bad"}` }, v.valid ? "intact" : "tampered"),
+      h("span", {}, v.valid
+        ? `${v.entries_checked} entries verified · head `
+        : `Tampering at entry #${v.first_invalid_id}: ${v.reason}`),
+      v.valid ? h("span", { class: "hash" }, h("b", {}, v.head_hash.slice(0, 16))) : null));
   } catch (e) { toast(e.message); }
 }
 
 async function loadReview() {
   const r = await api("/reports/access-review?days=30");
   const c = r.control_checks;
-  const kpi = (v, l, bad) => h("div", { class: "kpi" }, h("div", { class: `v ${bad ? "error" : ""}` }, String(v)), h("div", { class: "l" }, l));
+  const kpi = (v, l, bad) => h("div", { class: "kpi" }, h("div", { class: `v ${bad ? "bad" : ""}` }, String(v)), h("div", { class: "l" }, l));
   $("#review").replaceChildren(
     h("div", { class: "kpis" },
-      kpi(c.self_approvals, "Self-approvals", c.self_approvals > 0),
-      kpi(c.active_grants_for_inactive_users, "Grants held by leavers", c.active_grants_for_inactive_users > 0),
-      kpi(c.unreviewed_break_glass, "Unreviewed break-glass", c.unreviewed_break_glass > 0),
-      kpi(c.audit_chain_valid ? "Intact" : "Broken", "Audit chain", !c.audit_chain_valid)),
+      kpi(c.self_approvals, "self-approvals", c.self_approvals > 0),
+      kpi(c.active_grants_for_inactive_users, "grants held by leavers", c.active_grants_for_inactive_users > 0),
+      kpi(c.unreviewed_break_glass, "unreviewed break-glass", c.unreviewed_break_glass > 0),
+      kpi(c.audit_chain_valid ? "ok" : "broken", "audit chain", !c.audit_chain_valid)),
     h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["User", "Role", "Active grants", "Grants (30d)", "Denied", "Open alerts", "Recommendation"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, r.users.map((u) => h("tr", {}, h("td", {}, u.email), h("td", {}, `${u.role} · ${u.department}`),
-        h("td", {}, u.active_grants.join(", ") || "-"), h("td", {}, u.grants_in_period), h("td", {}, u.denied_in_period),
-        h("td", {}, u.open_alerts), h("td", {}, u.recommendation)))))));
+      h("thead", {}, h("tr", {}, ["User", "Active", "30d", "Denied", "Alerts", "Recommendation"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, r.users.map((u) => {
+        const [verb, ...rest] = u.recommendation.split(":");
+        const tone = { CERTIFY: "ok", INVESTIGATE: "warn", REVOKE: "bad" }[verb] ?? "";
+        return h("tr", {},
+          h("td", {}, h("div", {}, u.email.split("@")[0]), h("div", { class: "meta" }, u.role)),
+          h("td", { class: "mono" }, u.active_grants.join(", ") || "—"),
+          h("td", { class: "mono" }, u.grants_in_period), h("td", { class: "mono" }, u.denied_in_period),
+          h("td", { class: "mono" }, u.open_alerts),
+          h("td", {}, h("span", { class: `st ${tone}` }, verb.toLowerCase()), h("div", { class: "meta" }, rest.join(":").trim())));
+      })))));
 }
 
 async function downloadCsv(ev) {
@@ -249,11 +346,18 @@ async function downloadCsv(ev) {
 
 // --- Boot ----------------------------------------------------------------------
 
-$("#personas").replaceChildren(...PERSONAS.map(([email, name, desc]) =>
-  h("button", { class: "persona", type: "button", onclick: () => login(email) }, h("strong", {}, name), h("span", {}, desc))));
+try { applyTheme(localStorage.getItem("aegis-theme")); } catch (_) { /* storage unavailable */ }
+$("#personas").replaceChildren(...PERSONAS.map(([email, name, role]) =>
+  h("button", { class: "persona", type: "button", onclick: () => login(email) },
+    h("span", {}, name), h("span", { class: "role" }, role, " ", h("span", { class: "arrow" }, "→")))));
 $("#login-form").addEventListener("submit", (ev) => { ev.preventDefault(); login($("#login-email").value); });
 $("#request-form").addEventListener("submit", submitRequest);
+$("#request-text").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) $("#request-form").requestSubmit();
+});
 $("#verify").addEventListener("click", verifyChain);
 $("#csv").addEventListener("click", downloadCsv);
+$("#theme").addEventListener("click", toggleTheme);
+$("#logout").addEventListener("click", logout);
 try { state.token = sessionStorage.getItem("aegis-token"); } catch (_) { state.token = null; }
 if (state.token) start().catch(logout);
