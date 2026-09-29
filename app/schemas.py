@@ -128,6 +128,7 @@ class AccessDecisionOut(BaseModel):
     requires_approval: bool
     break_glass: bool
     approval_deadline: datetime | None
+    risk_flags: list[str]
     reasons: list[str]
     parsed: ParsedPolicy
     parser: str
@@ -158,6 +159,7 @@ class RequestOut(GrantOut):
     request_text: str
     decision_reason: str
     parser: str
+    risk_flags: str
     approval_deadline: datetime | None
     decided_by_id: int | None
     decided_at: datetime | None

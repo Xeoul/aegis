@@ -116,9 +116,10 @@ app/
   models.py      User, Resource, AccessRequest, AuditLog
   schemas.py     Pydantic I/O models: AccessRequestIn, ParsedPolicy, ABACPolicy, ...
   llm_parser.py  Natural language -> ParsedPolicy (Claude with structured outputs, or heuristic)
-  evaluator.py   ABAC rules -> ALLOW / DENY with reasons
+  evaluator.py   Builds Cedar entities, runs the policy engine, explains the decision
   scheduler.py   APScheduler sweep: expired grants -> REVOKED, stale approvals -> EXPIRED
   main.py        FastAPI app, lifespan (starts and stops the scheduler), router wiring
+policies/        Cedar schema, policies and role attributes
 seed_data.py     Mock users and resources (idempotent; --reset to wipe)
 tests/           pytest suite (runs offline)
 ```
@@ -140,21 +141,53 @@ another model.
 
 Every response and audit entry records which parser ran.
 
-## Policy rules (`evaluator.py`)
+## Policy as code (Cedar)
 
-A request is allowed only if every rule passes. Each rule that fails adds a reason to the response.
+Access rules are written in [Cedar](https://www.cedarpolicy.com/), the policy language behind
+AWS Verified Permissions. They are not hard-coded in Python.
 
-1. **Catalog**: the resource must exist.
-2. **Clearance**: the role must be cleared for the resource's sensitivity
-   (`intern` → public, `analyst`/`contractor` → internal,
-   `engineer`/`manager`/`auditor` → confidential, `sre`/`senior engineer`/`security engineer`/`admin` → restricted).
-3. **Privileged actions**: `delete` and `admin` require `sre`, `security engineer` or `admin`.
-4. **Department boundary**: confidential and restricted resources that have an `owner_department`
-   are only granted to that department, except to `security engineer`, `auditor` and `admin`.
-5. **Justification**: restricted resources require a stated reason.
+| File | Contents |
+|---|---|
+| `policies/aegis.cedarschema` | Entity model: `User`, `Role`, `Resource`, the `read`/`write`/`delete`/`admin` actions, and the request context |
+| `policies/aegis.cedar` | The rules |
+| `policies/attributes.json` | Role attributes (clearance, privileged, cross-department) and the maximum duration for each sensitivity level |
 
-Granted durations are capped per sensitivity level: 72h public, 24h internal, 8h confidential,
-2h restricted.
+The policies are checked against the schema at startup. If they fail, Aegis refuses to start.
+One baseline `permit` lets active employees request catalog resources, and a set of `forbid`
+guardrails constrain it. A matching `forbid` always overrides a `permit`, so each guardrail
+stands on its own, and every one that fires is returned as a reason, e.g.
+`[clearance] The requester's role is not cleared ...`.
+
+| Guardrail | Rule |
+|---|---|
+| `clearance` | The role's clearance must cover the resource's sensitivity (1 public … 4 restricted) |
+| `privileged-actions` | `delete` and `admin` need a privileged role (`sre`, `security engineer`, `admin`) |
+| `department-boundary` | Confidential and restricted resources stay inside their owning department, except for cross-department roles (`auditor`, `security engineer`, `admin`) |
+| `justification-required` | Restricted resources need a stated reason |
+| `approval-required` | Restricted resources and privileged actions are refused until `context.approved` is true. If this is the only guardrail that fires, the request goes to `PENDING_APPROVAL`. It is evaluated again with `approved=true` when a second person approves |
+
+Unknown roles get the lowest clearance, inactive users match no `permit`, and evaluation
+errors deny. Granted durations are capped by sensitivity: 72h public, 24h internal,
+8h confidential, 2h restricted.
+
+## Prompt-injection defenses
+
+The LLM only turns text into fields. It never decides.
+
+1. **Delimited input.** The request text is sanitized (control characters removed, `<` and
+   `>` escaped) and placed inside `<access_request>` tags. The system prompt treats it as data.
+2. **Constrained output.** Structured outputs force the schema. The resource is snapped to the
+   catalog (anything else becomes `unknown` and is denied), duration and free text are bounded,
+   and `action` is an enum.
+3. **Policy decides.** Cedar evaluates the parsed fields against the *real* user and resource
+   attributes from the database. The LLM cannot influence those.
+4. **Manipulation flagging.** Phrases like "ignore previous instructions", "you are now…",
+   "pre-approved" or "skip the approval", fake tags and forged JSON fields set `risk_flags`.
+   A flagged request is never granted automatically, even if policy allows it, and cannot use
+   break-glass. It goes to a human approver.
+
+`tests/test_prompt_injection.py` simulates a fully hijacked LLM that returns attacker-chosen
+fields and checks that policy still holds.
 
 ## Configuration
 

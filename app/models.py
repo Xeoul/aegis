@@ -96,6 +96,8 @@ class AccessRequest(Base):
     duration_hours: Mapped[int] = mapped_column(Integer, default=0)
     decision_reason: Mapped[str] = mapped_column(Text, default="")
     parser: Mapped[str] = mapped_column(String(40), default="")
+    # Comma-separated prompt-manipulation patterns found in request_text (see llm_parser).
+    risk_flags: Mapped[str] = mapped_column(String(200), default="")
 
     # Approval workflow
     approval_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

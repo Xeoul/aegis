@@ -7,6 +7,11 @@ Two backends:
 * ``heuristic`` - a deterministic keyword parser used when no API credentials are
   configured (local development, tests) or, in ``auto`` mode, when the API call fails.
 
+Security model: the request text is untrusted, and so is anything the LLM returns. The parser
+only extracts fields. Its output is constrained to a schema, the resource is snapped to the
+catalog, and the policy engine alone decides. :func:`detect_injection` additionally flags
+manipulation attempts so the caller can send them to a human.
+
 Select with ``AEGIS_LLM_MODE`` = ``auto`` (default) | ``anthropic`` | ``heuristic``.
 """
 
@@ -62,17 +67,49 @@ class ParseResult:
     parser: str
 
 
+# Phrases typical of attempts to steer the parser or the approval process. A match does not
+# deny the request; it removes the auto-grant path so a human looks at it.
+_INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("instruction-override", re.compile(r"\b(ignore|disregard|forget|override)\b.{0,40}\b(instructions?|rules?|prompt|policy|policies)\b", re.I | re.S)),
+    ("role-play", re.compile(r"\b(you are now|act as|pretend (to be|you are)|from now on you)\b", re.I)),
+    ("prompt-probe", re.compile(r"\b(system prompt|developer message|<\s*/?\s*(system|access_request|resource_catalog)\b)", re.I)),
+    ("decision-steering", re.compile(r"\b(auto[- ]?approve|pre[- ]?approved|already approved|approval (is )?not (needed|required)|bypass|skip (the )?(approval|review|policy))\b", re.I)),
+    ("output-forging", re.compile(r"[\"']?(allow_reason|duration_hours|\"action\"|\"resource\")[\"']?\s*:", re.I)),
+]
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def detect_injection(text: str) -> list[str]:
+    """Return the names of manipulation patterns found in ``text`` (empty if none)."""
+    return [name for name, pattern in _INJECTION_PATTERNS if pattern.search(text)]
+
+
+def sanitize(text: str) -> str:
+    """Drop control characters and neutralise angle brackets so the text cannot close or open
+    the XML-style tags that delimit it in the prompt."""
+    return _CONTROL_CHARS.sub("", text).replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_user_message(text: str, resource_catalog: Sequence[str]) -> str:
+    catalog = "\n".join(f"- {sanitize(name)}" for name in sorted(resource_catalog)) or "- (empty)"
+    return (
+        f"<resource_catalog>\n{catalog}\n</resource_catalog>\n\n"
+        f"<access_request>\n{sanitize(text)}\n</access_request>"
+    )
+
+
 def parse_access_request(text: str, resource_catalog: Sequence[str]) -> ParseResult:
     mode = os.getenv("AEGIS_LLM_MODE", "auto").lower()
     if mode == "heuristic" or (mode == "auto" and not _has_api_credentials()):
-        return ParseResult(heuristic_parse(text, resource_catalog), "heuristic")
+        return ParseResult(_constrain(heuristic_parse(text, resource_catalog), resource_catalog), "heuristic")
     try:
         return ParseResult(_anthropic_parse(text, resource_catalog), f"anthropic:{MODEL}")
     except (anthropic.APIError, ParserError) as exc:
         if mode == "anthropic":
             raise ParserError(f"LLM parsing failed: {exc}") from exc
         logger.warning("LLM parsing failed, falling back to heuristic parser: %s", exc)
-        return ParseResult(heuristic_parse(text, resource_catalog), "heuristic (llm fallback)")
+        fallback = _constrain(heuristic_parse(text, resource_catalog), resource_catalog)
+        return ParseResult(fallback, "heuristic (llm fallback)")
 
 
 def _has_api_credentials() -> bool:
@@ -92,20 +129,11 @@ def _get_client() -> anthropic.Anthropic:
 
 
 def _anthropic_parse(text: str, resource_catalog: Sequence[str]) -> ParsedPolicy:
-    catalog = "\n".join(f"- {name}" for name in sorted(resource_catalog)) or "- (empty)"
     response = _get_client().beta.messages.parse(
         model=MODEL,
         max_tokens=4096,
         system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"<resource_catalog>\n{catalog}\n</resource_catalog>\n\n"
-                    f"<access_request>\n{text}\n</access_request>"
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": build_user_message(text, resource_catalog)}],
         output_format=ParsedPolicy,
         # Field extraction is a light task; low effort keeps latency and cost down.
         output_config={"effort": "low"},
@@ -117,8 +145,14 @@ def _anthropic_parse(text: str, resource_catalog: Sequence[str]) -> ParsedPolicy
         raise ParserError("model declined to parse the request")
     if response.parsed_output is None:
         raise ParserError(f"no structured output (stop_reason={response.stop_reason})")
-    policy = response.parsed_output
+    return _constrain(response.parsed_output, resource_catalog)
+
+
+def _constrain(policy: ParsedPolicy, resource_catalog: Sequence[str]) -> ParsedPolicy:
+    """Treat LLM output as untrusted: snap the resource to the catalog and bound free-text fields."""
     policy.resource = _canonical_resource(policy.resource, resource_catalog)
+    policy.duration_hours = max(1, min(policy.duration_hours, 24 * 30))
+    policy.allow_reason = _CONTROL_CHARS.sub("", policy.allow_reason).strip()[:500] or "No justification provided"
     return policy
 
 

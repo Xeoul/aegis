@@ -6,7 +6,7 @@ from app import audit, workflow
 from app.auth import get_current_user, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
-from app.llm_parser import ParserError, parse_access_request
+from app.llm_parser import ParserError, detect_injection, parse_access_request
 from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
 from app.schemas import (
     ABACPolicy,
@@ -46,6 +46,16 @@ def request_access(
     resource = db.scalar(select(Resource).where(Resource.name == policy.resource))
     result = evaluate(user, resource, policy)
 
+    # Defense in depth against prompt injection: a request that looks like it is trying to
+    # steer the parser or the approval process never gets an automatic grant.
+    flags = detect_injection(payload.request_text)
+    needs_approval = result.requires_approval or (result.allowed and bool(flags))
+    if flags and result.allowed:
+        result.reasons.append(
+            f"Flagged for human review: possible prompt manipulation ({', '.join(flags)}). "
+            "Break-glass is disabled for flagged requests."
+        )
+
     record = AccessRequest(
         user_id=user.id,
         resource=policy.resource,
@@ -57,17 +67,21 @@ def request_access(
         duration_hours=result.granted_duration_hours,
         decision_reason=" ".join(result.reasons),
         parser=parsed.parser,
+        risk_flags=",".join(flags),
     )
     db.add(record)
     db.flush()
 
     common = dict(request_id=record.id, user_id=user.id, actor_id=user.id, resource=policy.resource, action=policy.action)
-    audit.record(db, AuditEvent.REQUEST_SUBMITTED, detail=f'[{parsed.parser}] "{payload.request_text}"', **common)
+    flag_note = f" risk_flags={','.join(flags)}" if flags else ""
+    audit.record(
+        db, AuditEvent.REQUEST_SUBMITTED, detail=f'[{parsed.parser}]{flag_note} "{payload.request_text}"', **common
+    )
     if not result.allowed:
         audit.record(db, AuditEvent.ACCESS_DENIED, detail=" ".join(result.reasons), **common)
-    elif result.requires_approval and payload.break_glass:
+    elif needs_approval and payload.break_glass and not flags:
         workflow.break_glass(db, record, policy.allow_reason)
-    elif result.requires_approval:
+    elif needs_approval:
         workflow.start_approval(db, record)
     else:
         workflow.activate(db, record, user.id, " ".join(result.reasons))
@@ -77,9 +91,10 @@ def request_access(
         request_id=record.id,
         decision=result.decision,
         status=record.status,
-        requires_approval=result.requires_approval,
+        requires_approval=needs_approval,
         break_glass=record.break_glass,
         approval_deadline=record.approval_deadline,
+        risk_flags=flags,
         reasons=result.reasons,
         parsed=policy,
         parser=parsed.parser,

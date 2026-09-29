@@ -65,6 +65,7 @@ def approve(
         ParsedPolicy(
             resource=req.resource, action=req.action, allow_reason=req.allow_reason, duration_hours=req.duration_hours
         ),
+        approved=True,
     )
     now = utcnow()
     req.decided_by_id, req.decided_at, req.decision_comment = user.id, now, payload.comment
