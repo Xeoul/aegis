@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, workflow
+from app import audit, credentials, detection, workflow
 from app.auth import get_current_user, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
-from app.llm_parser import ParserError, parse_access_request
+from app.llm_parser import ParserError, detect_injection, parse_access_request
 from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
 from app.schemas import (
     ABACPolicy,
     AccessDecisionOut,
     AccessRequestIn,
+    CredentialsOut,
     GrantOut,
     PolicyConditions,
     PolicyResource,
@@ -46,6 +47,16 @@ def request_access(
     resource = db.scalar(select(Resource).where(Resource.name == policy.resource))
     result = evaluate(user, resource, policy)
 
+    # Defense in depth against prompt injection: a request that looks like it is trying to
+    # steer the parser or the approval process never gets an automatic grant.
+    flags = detect_injection(payload.request_text)
+    needs_approval = result.requires_approval or (result.allowed and bool(flags))
+    if flags and result.allowed:
+        result.reasons.append(
+            f"Flagged for human review: possible prompt manipulation ({', '.join(flags)}). "
+            "Break-glass is disabled for flagged requests."
+        )
+
     record = AccessRequest(
         user_id=user.id,
         resource=policy.resource,
@@ -57,29 +68,38 @@ def request_access(
         duration_hours=result.granted_duration_hours,
         decision_reason=" ".join(result.reasons),
         parser=parsed.parser,
+        risk_flags=",".join(flags),
     )
     db.add(record)
     db.flush()
 
-    common = dict(request_id=record.id, user_id=user.id, actor_id=user.id, resource=policy.resource, action=policy.action)
-    audit.record(db, AuditEvent.REQUEST_SUBMITTED, detail=f'[{parsed.parser}] "{payload.request_text}"', **common)
+    flag_note = f" risk_flags={','.join(flags)}" if flags else ""
+    audit.record_request(
+        db,
+        AuditEvent.REQUEST_SUBMITTED,
+        record,
+        actor_id=user.id,
+        detail=f'[{parsed.parser}]{flag_note} "{payload.request_text}"',
+    )
     if not result.allowed:
-        audit.record(db, AuditEvent.ACCESS_DENIED, detail=" ".join(result.reasons), **common)
-    elif result.requires_approval and payload.break_glass:
+        audit.record_request(db, AuditEvent.ACCESS_DENIED, record, actor_id=user.id, detail=" ".join(result.reasons))
+    elif needs_approval and payload.break_glass and not flags:
         workflow.break_glass(db, record, policy.allow_reason)
-    elif result.requires_approval:
+    elif needs_approval:
         workflow.start_approval(db, record)
     else:
         workflow.activate(db, record, user.id, " ".join(result.reasons))
+    detection.scan(db, record, resource)
     audit.commit(db)
 
     return AccessDecisionOut(
         request_id=record.id,
         decision=result.decision,
         status=record.status,
-        requires_approval=result.requires_approval,
+        requires_approval=needs_approval,
         break_glass=record.break_glass,
         approval_deadline=record.approval_deadline,
+        risk_flags=flags,
         reasons=result.reasons,
         parsed=policy,
         parser=parsed.parser,
@@ -105,7 +125,9 @@ def my_requests(user: User = Depends(get_current_user), db: Session = Depends(ge
 
 
 @router.get("/requests/{request_id}", response_model=RequestOut)
-def get_request(request_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> AccessRequest:
+def get_request(
+    request_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> AccessRequest:
     req, resource = load_request(db, request_id)
     if req.user_id != user.id and not is_oversight(user) and not workflow.approver_eligibility(user, req, resource)[0]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Request {request_id} not found")
@@ -152,3 +174,38 @@ def revoke_grant(
     workflow.revoke(db, grant, user.id, f"Revoked early: {payload.reason}")
     audit.commit(db)
     return grant
+
+
+@router.post("/grants/{grant_id}/credentials", response_model=CredentialsOut)
+def issue_credentials(
+    grant_id: int, response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> CredentialsOut:
+    """Exchange your ACTIVE grant for temporary AWS credentials scoped to exactly that grant."""
+    if not credentials.enabled():
+        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "Credential broker is disabled (AEGIS_CREDENTIAL_BROKER)")
+    grant, resource = load_request(db, grant_id)
+    if grant.user_id != user.id:
+        # Only the grantee may hold the credentials; not even approvers or admins.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Request {grant_id} not found")
+    if grant.status != RequestStatus.ACTIVE or grant.expires_at is None or grant.expires_at <= utcnow():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Grant is not active")
+    if resource is None or not resource.aws_role_arn:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{grant.resource} is not backed by an AWS role")
+    try:
+        issued = credentials.issue(grant, resource, user)
+    except credentials.BrokerError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    grant.credentials_issued_at = utcnow()
+    audit.record_request(
+        db,
+        AuditEvent.CREDENTIALS_ISSUED,
+        grant,
+        actor_id=user.id,
+        # The access key id is safe to log and lets CloudTrail be joined back to this grant.
+        detail=f"STS session {issued.session_name} ({issued.access_key_id}) on {issued.role_arn} "
+        f"until {issued.expiration.isoformat()}; actions {issued.session_policy['Statement'][0]['Action']}.",
+    )
+    audit.commit(db)
+    response.headers["Cache-Control"] = "no-store"
+    return CredentialsOut(**issued.__dict__)

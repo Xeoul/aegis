@@ -6,3 +6,7 @@ __pycache__/
 *.db-journal
 .env
 _site/
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/

@@ -1,14 +1,14 @@
 """Background jobs: revoke expired grants and expire approvals nobody acted on."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
-from app import audit, workflow
+from app import audit, credentials, workflow
 from app.database import SessionLocal, utcnow
-from app.models import AccessRequest, AuditEvent, RequestStatus
+from app.models import AccessRequest, AuditEvent, RequestStatus, Resource
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +25,14 @@ def revoke_expired_grants() -> int:
             )
         ).all()
         for grant in expired:
-            assert grant.expires_at is not None  # guaranteed by the query
+            if grant.expires_at is None:  # excluded by the query; keeps the type checker honest
+                continue
             workflow.revoke(
-                db, grant, None, f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked."
+                db,
+                grant,
+                None,
+                f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked.",
+                early=False,
             )
         audit.commit(db)
     if expired:
@@ -46,25 +51,55 @@ def expire_stale_requests() -> int:
         ).all()
         for req in stale:
             req.status = RequestStatus.EXPIRED
-            audit.record(
+            audit.record_request(
                 db,
                 AuditEvent.REQUEST_EXPIRED,
-                request_id=req.id,
-                user_id=req.user_id,
-                resource=req.resource,
-                action=req.action,
+                req,
+                actor_id=None,
                 detail="No approver acted before the approval deadline.",
             )
         audit.commit(db)
     return len(stale)
 
 
+def prune_cloud_revocations() -> int:
+    """Remove AWS deny statements whose sessions have all expired."""
+    if not credentials.enabled():
+        return 0
+    with SessionLocal() as db:
+        roles = set(db.scalars(select(Resource.aws_role_arn).where(Resource.aws_role_arn.is_not(None))))
+    removed = 0
+    for role_arn in roles:
+        if not role_arn:
+            continue
+        try:
+            removed += credentials.prune_revocations(role_arn)
+        except Exception:
+            logger.exception("Could not prune revocations on %s", role_arn)
+    return removed
+
+
 def run_sweep() -> None:
     revoke_expired_grants()
     expire_stale_requests()
+    prune_cloud_revocations()
 
 
-def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
+DEMO_RESET_JOB_ID = "demo-reset"
+last_demo_reset: datetime | None = None
+
+
+def reset_demo_data() -> None:
+    """Wipe and re-seed the database (public demo mode only)."""
+    global last_demo_reset
+    from seed_data import seed  # repo-root script; imported lazily so the app doesn't depend on it
+
+    seed(reset=True)
+    last_demo_reset = datetime.now(UTC)
+    logger.info("Demo data reset")
+
+
+def create_scheduler(interval_seconds: int = 60, demo_reset_minutes: int | None = None) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
         run_sweep,
@@ -73,6 +108,10 @@ def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
         id=SWEEP_JOB_ID,
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(timezone.utc),  # also sweep once at startup
+        next_run_time=datetime.now(UTC),  # also sweep once at startup
     )
+    if demo_reset_minutes:
+        global last_demo_reset
+        last_demo_reset = datetime.now(UTC)  # the entrypoint seeded the data just before startup
+        scheduler.add_job(reset_demo_data, "interval", minutes=demo_reset_minutes, id=DEMO_RESET_JOB_ID, coalesce=True)
     return scheduler

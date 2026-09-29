@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -23,7 +23,7 @@ class Base(DeclarativeBase):
 
 def utcnow() -> datetime:
     """Naive UTC timestamp. SQLite has no timezone type, so everything is stored as naive UTC."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def init_db() -> None:

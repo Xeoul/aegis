@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AuditEvent, RequestStatus, SensitivityLevel
+from app.models import AlertSeverity, AlertStatus, AuditEvent, RequestStatus, SensitivityLevel
 
 Action = Literal["read", "write", "delete", "admin"]
 Decision = Literal["ALLOW", "DENY"]
@@ -54,7 +54,7 @@ class DevTokenRequest(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 - OAuth token type, not a secret
     expires_in: int
 
 
@@ -65,6 +65,9 @@ class ResourceOut(BaseModel):
     name: str
     sensitivity_level: SensitivityLevel
     owner_department: str | None
+    aws_service: str | None
+    aws_resource_arn: str | None
+    aws_role_arn: str | None
 
 
 # --- Natural-language request & parsed policy -------------------------------
@@ -128,6 +131,7 @@ class AccessDecisionOut(BaseModel):
     requires_approval: bool
     break_glass: bool
     approval_deadline: datetime | None
+    risk_flags: list[str]
     reasons: list[str]
     parsed: ParsedPolicy
     parser: str
@@ -158,15 +162,29 @@ class RequestOut(GrantOut):
     request_text: str
     decision_reason: str
     parser: str
+    risk_flags: str
     approval_deadline: datetime | None
     decided_by_id: int | None
     decided_at: datetime | None
     decision_comment: str | None
     reviewed_by_id: int | None
     reviewed_at: datetime | None
+    credentials_issued_at: datetime | None
     revoked_at: datetime | None
     revoked_by_id: int | None
     revoke_reason: str | None
+
+
+class CredentialsOut(BaseModel):
+    """Temporary AWS credentials for one grant. Returned once per call and never stored by Aegis."""
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: datetime
+    role_arn: str
+    session_name: str
+    session_policy: dict
 
 
 class CommentIn(BaseModel):
@@ -205,3 +223,61 @@ class AuditVerificationOut(BaseModel):
     head_hash: str
     first_invalid_id: int | None
     reason: str | None
+
+
+# --- Governance --------------------------------------------------------------
+
+
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    rule: str
+    severity: AlertSeverity
+    status: AlertStatus
+    user_id: int
+    request_id: int | None
+    detail: str
+    resolved_by_id: int | None
+    resolved_at: datetime | None
+    resolution_note: str | None
+
+
+class AlertResolveIn(BaseModel):
+    note: str = Field(min_length=3, max_length=1000)
+    false_positive: bool = False
+
+
+class UserAccessReview(BaseModel):
+    user_id: int
+    email: str
+    department: str
+    role: str
+    manager_id: int | None
+    is_active: bool
+    active_grants: list[str]
+    resources_accessed: list[str]
+    grants_in_period: int
+    denied_in_period: int
+    break_glass_in_period: int
+    break_glass_unreviewed: int
+    approvals_given: int
+    open_alerts: int
+    recommendation: str
+
+
+class ControlChecks(BaseModel):
+    """Evidence that the preventive controls held during the period (all should be 0 / true)."""
+
+    self_approvals: int
+    active_grants_for_inactive_users: int
+    unreviewed_break_glass: int
+    audit_chain_valid: bool
+
+
+class AccessReviewReport(BaseModel):
+    generated_at: datetime
+    period_days: int
+    control_checks: ControlChecks
+    users: list[UserAccessReview]

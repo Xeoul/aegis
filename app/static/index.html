@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis-JIT</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="banner" class="banner" role="note" hidden></div>
+  <section id="login" class="login">
+    <div class="login-inner">
+      <div class="mark"><span class="glyph" aria-hidden="true"></span>aegis<span class="sep">/</span>jit</div>
+      <h1>No standing access.<br><span class="muted">Ask for exactly what you need, when you need it.</span></h1>
+      <p class="label">Sign in as</p>
+      <div id="personas" class="personas"></div>
+      <form id="login-form" class="inline-form">
+        <input id="login-email" type="email" placeholder="or enter an email" required aria-label="Email">
+        <button type="submit" class="ghost">Continue →</button>
+      </form>
+      <p id="login-error" class="error" role="alert"></p>
+      <p class="fine">Development identity provider. With <code>AEGIS_AUTH_MODE=oidc</code>, tokens come from your IdP.</p>
+    </div>
+  </section>
+
+  <div id="app" class="shell" hidden>
+    <aside class="rail">
+      <div class="mark"><span class="glyph" aria-hidden="true"></span>aegis<span class="sep">/</span>jit</div>
+      <nav id="tabs" class="nav" role="tablist" aria-label="Sections"></nav>
+      <div class="rail-foot">
+        <div id="whoami" class="whoami"></div>
+        <div class="rail-actions">
+          <button id="theme" class="link" type="button" aria-label="Toggle theme">theme</button>
+          <button id="logout" class="link" type="button">sign out</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="panel" data-tab="request">
+        <header class="head"><p class="label">01 — Request</p><h2>What do you need access to?</h2></header>
+        <form id="request-form" class="composer">
+          <textarea id="request-text" rows="3" required minlength="5"
+            placeholder="Read access to prod-db for 4 hours to debug a failing migration"></textarea>
+          <div class="composer-bar">
+            <label class="toggle"><input type="checkbox" id="break-glass"><span class="track" aria-hidden="true"></span>
+              Break-glass <span class="muted">· emergency, 1h, reviewed after</span></label>
+            <button type="submit" class="primary" title="Ctrl/⌘ + Enter">Submit</button>
+          </div>
+        </form>
+        <div id="decision"></div>
+      </section>
+
+      <section class="panel" data-tab="mine" hidden>
+        <header class="head"><p class="label">02 — Access</p><h2>Active grants</h2></header>
+        <div id="grants"></div>
+        <div id="creds"></div>
+        <h3 class="sub">History</h3>
+        <div id="requests"></div>
+      </section>
+
+      <section class="panel" data-tab="approvals" hidden>
+        <header class="head"><p class="label">03 — Approvals</p><h2>Waiting on you</h2>
+          <p class="muted">Requests you're eligible to decide. Your own never appear here.</p></header>
+        <div id="approvals"></div>
+      </section>
+
+      <section class="panel" data-tab="alerts" hidden>
+        <header class="head"><p class="label">04 — Detection</p><h2>Open alerts</h2></header>
+        <div id="alerts"></div>
+      </section>
+
+      <section class="panel" data-tab="audit" hidden>
+        <header class="head row-between"><div><p class="label">05 — Audit</p><h2>Hash-chained log</h2></div>
+          <button id="verify" class="ghost" type="button">Verify chain</button></header>
+        <div id="chain"></div>
+        <div id="audit"></div>
+      </section>
+
+      <section class="panel" data-tab="review" hidden>
+        <header class="head row-between"><div><p class="label">06 — Review</p><h2>Access certification</h2></div>
+          <a id="csv" class="ghost button" href="#">Export CSV</a></header>
+        <div id="review"></div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

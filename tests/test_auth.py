@@ -12,7 +12,14 @@ from app.models import User
 
 def _token(email, *, secret=None, **overrides):
     now = utcnow()
-    claims = {"iss": DEV_ISSUER, "aud": DEV_AUDIENCE, "sub": "1", "email": email, "iat": now, "exp": now + timedelta(minutes=5)}
+    claims = {
+        "iss": DEV_ISSUER,
+        "aud": DEV_AUDIENCE,
+        "sub": "1",
+        "email": email,
+        "iat": now,
+        "exp": now + timedelta(minutes=5),
+    }
     claims.update(overrides)
     token = jwt.encode(claims, secret or settings.jwt_secret, algorithm="HS256")
     return {"Authorization": f"Bearer {token}"}
@@ -100,6 +107,7 @@ def test_oidc_mode_verifies_rs256_against_jwks(client, monkeypatch):
     idp_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     attacker_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     issuer = "https://idp.aegis.example/realms/corp"
+
     class FakeJWKS:
         def get_signing_key_from_jwt(self, token):
             return type("K", (), {"key": idp_key.public_key()})()
@@ -108,7 +116,14 @@ def test_oidc_mode_verifies_rs256_against_jwks(client, monkeypatch):
     monkeypatch.setattr(auth_mod, "_jwks_client", lambda: FakeJWKS())
 
     now = utcnow()
-    claims = {"iss": issuer, "aud": "aegis-jit", "sub": "idp-123", "email": ALICE, "iat": now, "exp": now + timedelta(minutes=5)}
+    claims = {
+        "iss": issuer,
+        "aud": "aegis-jit",
+        "sub": "idp-123",
+        "email": ALICE,
+        "iat": now,
+        "exp": now + timedelta(minutes=5),
+    }
     good = jwt.encode(claims, idp_key, algorithm="RS256")
     forged = jwt.encode(claims, attacker_key, algorithm="RS256")
     hs256 = jwt.encode(claims, "x" * 32, algorithm="HS256")  # algorithm-confusion attempt

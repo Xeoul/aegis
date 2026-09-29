@@ -1,53 +1,33 @@
-"""Attribute-based access control (ABAC) evaluation.
+"""Attribute-based access control, evaluated by the Cedar policy engine.
 
-A request is ALLOWED only if every rule passes; each failing rule contributes a reason.
+The rules live in ``policies/aegis.cedar`` (validated against ``policies/aegis.cedarschema``)
+and role attributes in ``policies/attributes.json``. This module only translates Aegis
+objects into Cedar entities, asks Cedar for a decision, and turns the policies that determined
+it into readable reasons.
 
-1. The resource must exist in the catalog.
-2. Role clearance: the user's role must be cleared for the resource's sensitivity level.
-3. Privileged actions: ``delete`` and ``admin`` require a privileged role.
-4. Department boundary: confidential and restricted resources are limited to their owning
-   department, except for cross-department roles (security, auditors).
-5. Justification: restricted resources require a stated business reason.
+Outcomes:
 
-Approved durations are capped per sensitivity level rather than denied outright.
+* Cedar ALLOW: grant immediately.
+* Cedar DENY where the only matching forbid is ``approval-required``: the request is allowed
+  but needs a second person. At approval time it is re-evaluated with ``approved=True``.
+* Any other DENY: denied, with one reason per guardrail that fired.
 
-An ALLOW is not always an immediate grant: restricted resources and privileged actions are
-marked ``requires_approval`` and wait for a second person (see ``app.workflow``).
+Granted durations are capped per sensitivity level rather than denied outright.
 """
 
+import json
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import cedarpy
 
 from app.models import Resource, SensitivityLevel, User
 from app.schemas import Decision, ParsedPolicy
 
-# Highest sensitivity each role may access. Unknown roles fall back to PUBLIC.
-ROLE_CLEARANCE: dict[str, SensitivityLevel] = {
-    "intern": SensitivityLevel.PUBLIC,
-    "contractor": SensitivityLevel.INTERNAL,
-    "analyst": SensitivityLevel.INTERNAL,
-    "engineer": SensitivityLevel.CONFIDENTIAL,
-    "manager": SensitivityLevel.CONFIDENTIAL,
-    "auditor": SensitivityLevel.CONFIDENTIAL,
-    "senior engineer": SensitivityLevel.RESTRICTED,
-    "sre": SensitivityLevel.RESTRICTED,
-    "security engineer": SensitivityLevel.RESTRICTED,
-    "admin": SensitivityLevel.RESTRICTED,
-}
-
-PRIVILEGED_ACTIONS = {"delete", "admin"}
-PRIVILEGED_ROLES = {"sre", "admin", "security engineer"}
-
-# Roles whose job requires access across department boundaries.
-CROSS_DEPARTMENT_ROLES = {"security engineer", "auditor", "admin"}
-DEPARTMENT_BOUND_LEVELS = {SensitivityLevel.CONFIDENTIAL, SensitivityLevel.RESTRICTED}
-
-MAX_DURATION_HOURS: dict[SensitivityLevel, int] = {
-    SensitivityLevel.PUBLIC: 72,
-    SensitivityLevel.INTERNAL: 24,
-    SensitivityLevel.CONFIDENTIAL: 8,
-    SensitivityLevel.RESTRICTED: 2,
-}
-
+POLICY_DIR = Path(__file__).resolve().parent.parent / "policies"
+APPROVAL_POLICY_ID = "approval-required"
 NO_JUSTIFICATION = "no justification provided"
 
 # Emergency (break-glass) grants skip approval, so they are kept very short.
@@ -60,63 +40,140 @@ class EvaluationResult:
     reasons: list[str] = field(default_factory=list)
     granted_duration_hours: int = 0
     requires_approval: bool = False
+    policy_ids: list[str] = field(default_factory=list)
 
     @property
     def allowed(self) -> bool:
         return self.decision == "ALLOW"
 
 
+@dataclass(frozen=True)
+class PolicyBundle:
+    policies: Any  # cedarpy.PolicySet
+    schema: Any  # cedarpy.Schema
+    annotations: dict[str, dict[str, str]]  # Cedar-internal policy id -> {"id", "reason"}
+    roles: dict[str, dict[str, Any]]
+    default_role: dict[str, Any]
+    max_duration_hours: dict[SensitivityLevel, int]
+
+
+class PolicyError(RuntimeError):
+    pass
+
+
 def normalize(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").split())
 
 
-def evaluate(user: User, resource: Resource | None, policy: ParsedPolicy) -> EvaluationResult:
+@lru_cache(maxsize=1)
+def load_policies() -> PolicyBundle:
+    """Parse and validate the policy bundle once. Invalid policies fail closed at startup."""
+    policy_text = (POLICY_DIR / "aegis.cedar").read_text()
+    schema_text = (POLICY_DIR / "aegis.cedarschema").read_text()
+    validation = cedarpy.validate_policies(policy_text, schema_text)
+    if not validation.validation_passed:
+        raise PolicyError(f"Cedar policies failed schema validation: {validation.errors}")
+    static = json.loads(cedarpy.policies_to_json_str(policy_text))["staticPolicies"]
+    attributes = json.loads((POLICY_DIR / "attributes.json").read_text())
+    return PolicyBundle(
+        policies=cedarpy.PolicySet.from_str(policy_text),
+        schema=cedarpy.Schema.from_str(schema_text),
+        annotations={pid: p.get("annotations", {}) for pid, p in static.items()},
+        roles={normalize(k): v for k, v in attributes["roles"].items()},
+        default_role=attributes["default_role"],
+        max_duration_hours={SensitivityLevel(k): v for k, v in attributes["max_duration_hours"].items()},
+    )
+
+
+def _entities(user: User, resource: Resource, bundle: PolicyBundle) -> tuple[list[dict], str]:
+    role_key = normalize(user.role)
+    role_id = role_key if role_key in bundle.roles else "__default__"
+    role_attrs = bundle.roles.get(role_key, bundle.default_role)
+    resource_attrs: dict[str, Any] = {"sensitivity": resource.sensitivity_level.rank}
+    if resource.owner_department:
+        resource_attrs["owner_department"] = normalize(resource.owner_department)
+    role_uid = {"type": "Role", "id": role_id}
+    return [
+        {"uid": role_uid, "attrs": role_attrs, "parents": []},
+        {
+            "uid": {"type": "User", "id": str(user.id)},
+            "attrs": {
+                "role": {"__entity": role_uid},
+                "department": normalize(user.department),
+                "active": bool(user.is_active),
+            },
+            "parents": [role_uid],
+        },
+        {"uid": {"type": "Resource", "id": resource.name}, "attrs": resource_attrs, "parents": []},
+    ], role_id
+
+
+def _detail(policy_id: str, user: User, resource: Resource, policy: ParsedPolicy, clearance: int) -> str:
+    level = resource.sensitivity_level
+    cleared = list(SensitivityLevel)[max(clearance, 1) - 1].value
+    return {
+        "clearance": f"Role '{user.role}' is cleared up to {cleared}; '{resource.name}' is {level.value}.",
+        "privileged-actions": f"Role '{user.role}' may not perform '{policy.action}'.",
+        "department-boundary": f"'{resource.name}' belongs to {resource.owner_department}; "
+        f"requester is in {user.department}.",
+        "baseline-active-employee": "Requester is an active employee.",
+    }.get(policy_id, "")
+
+
+def evaluate(
+    user: User, resource: Resource | None, policy: ParsedPolicy, *, approved: bool = False
+) -> EvaluationResult:
     if resource is None:
         return EvaluationResult("DENY", [f"Resource '{policy.resource}' is not in the resource catalog."])
 
-    role = normalize(user.role)
-    level = resource.sensitivity_level
-    clearance = ROLE_CLEARANCE.get(role, SensitivityLevel.PUBLIC)
-    denials: list[str] = []
-
-    if clearance.rank < level.rank:
-        denials.append(
-            f"Role '{user.role}' is cleared up to {clearance.value}; '{resource.name}' is {level.value}."
-        )
-
-    if policy.action in PRIVILEGED_ACTIONS and role not in PRIVILEGED_ROLES:
-        denials.append(
-            f"Action '{policy.action}' is privileged and requires one of: {', '.join(sorted(PRIVILEGED_ROLES))}."
-        )
-
-    if (
-        level in DEPARTMENT_BOUND_LEVELS
-        and resource.owner_department
-        and normalize(user.department) != normalize(resource.owner_department)
-        and role not in CROSS_DEPARTMENT_ROLES
-    ):
-        denials.append(
-            f"'{resource.name}' is {level.value} and restricted to the {resource.owner_department} "
-            f"department; user is in {user.department}."
-        )
-
+    bundle = load_policies()
+    entities, role_id = _entities(user, resource, bundle)
     reason = policy.allow_reason.strip()
-    if level == SensitivityLevel.RESTRICTED and (not reason or reason.lower().startswith(NO_JUSTIFICATION)):
-        denials.append("Restricted resources require a business justification.")
+    result = cedarpy.is_authorized(
+        {
+            "principal": {"type": "User", "id": str(user.id)},
+            "action": {"type": "Action", "id": policy.action},
+            "resource": {"type": "Resource", "id": resource.name},
+            "context": {
+                "has_justification": bool(reason) and not reason.lower().startswith(NO_JUSTIFICATION),
+                "approved": approved,
+            },
+        },
+        bundle.policies,
+        entities,
+        schema=bundle.schema,
+    )
+    if result.diagnostics.errors:
+        # Evaluation errors mean a policy could not be applied; fail closed.
+        return EvaluationResult("DENY", [f"Policy evaluation error: {result.diagnostics.errors}"])
 
-    if denials:
-        return EvaluationResult("DENY", denials)
+    clearance = bundle.roles.get(role_id, bundle.default_role)["clearance"]
+    determining = [bundle.annotations.get(pid, {}) for pid in result.diagnostics.reasons]
+    ids = [a.get("id", "?") for a in determining]
 
-    cap = MAX_DURATION_HOURS[level]
+    def explain(annotation: dict[str, str]) -> str:
+        detail = _detail(annotation.get("id", ""), user, resource, policy, clearance)
+        return f"[{annotation.get('id')}] {annotation.get('reason', '')} {detail}".strip()
+
+    requires_approval = False
+    if not result.allowed:
+        if ids == [APPROVAL_POLICY_ID]:
+            requires_approval = True
+        else:
+            # approval-required is not a reason to deny, so it is left out of the explanation.
+            blocking = [a for a in determining if a.get("id") != APPROVAL_POLICY_ID]
+            return EvaluationResult(
+                "DENY",
+                [explain(a) for a in blocking] or ["No policy permits this request."],
+                policy_ids=[a.get("id", "?") for a in blocking],
+            )
+
+    cap = bundle.max_duration_hours[resource.sensitivity_level]
     requested = max(1, policy.duration_hours)
     granted = min(requested, cap)
-    reasons = [
-        f"Role '{user.role}' is cleared for {level.value} resources.",
-        f"Action '{policy.action}' is permitted for this role.",
-    ]
+    reasons = [explain(a) for a in determining]
     if granted < requested:
-        reasons.append(f"Duration reduced from {requested}h to the {level.value} maximum of {cap}h.")
-    requires_approval = level == SensitivityLevel.RESTRICTED or policy.action in PRIVILEGED_ACTIONS
-    if requires_approval:
-        reasons.append("Restricted resources and privileged actions need a second person to approve.")
-    return EvaluationResult("ALLOW", reasons, granted, requires_approval)
+        reasons.append(
+            f"Duration reduced from {requested}h to the {resource.sensitivity_level.value} maximum of {cap}h."
+        )
+    return EvaluationResult("ALLOW", reasons, granted, requires_approval, ids)

@@ -20,9 +20,9 @@ def _check_manager(db: Session, manager_id: int | None, user_id: int | None = No
     if manager_id is None:
         return
     if manager_id == user_id:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A user cannot be their own manager")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A user cannot be their own manager")
     if db.get(User, manager_id) is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Manager {manager_id} does not exist")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Manager {manager_id} does not exist")
 
 
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED, tags=["users"])

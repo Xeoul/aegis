@@ -1,0 +1,29 @@
+# One-click public demo on Render (free plan). See docs/DEPLOY.md.
+services:
+  - type: web
+    name: aegis-jit-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: AEGIS_DEMO_MODE
+        value: "true"
+      - key: AEGIS_DEMO_RESET_MINUTES
+        value: "180"
+      - key: AEGIS_AUTH_MODE
+        value: dev             # demo personas; production uses oidc
+      - key: AEGIS_AUDIT_KEY
+        generateValue: true    # random secret, kept out of the repo
+      - key: AEGIS_JWT_SECRET
+        generateValue: true
+      - key: AEGIS_TOKEN_TTL_MINUTES
+        value: "30"
+      - key: AEGIS_LLM_MODE
+        value: heuristic       # no API key needed, and strangers can't spend your credits
+      - key: AEGIS_CREDENTIAL_BROKER
+        value: none            # never connect a public demo to real AWS
+      - key: AEGIS_BUSINESS_HOURS_UTC
+        value: "00-24"         # don't raise off-hours alerts for visitors in other time zones
+      - key: AEGIS_BUSINESS_DAYS
+        value: "0-6"

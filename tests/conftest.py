@@ -9,6 +9,9 @@ os.environ["AEGIS_SCHEDULER_ENABLED"] = "false"
 os.environ["AEGIS_LLM_MODE"] = "heuristic"
 os.environ["AEGIS_AUTH_MODE"] = "dev"
 os.environ["AEGIS_AUDIT_KEY"] = "test-audit-key"
+# Treat every moment as business hours so the off-hours rule only fires in tests that want it.
+os.environ["AEGIS_BUSINESS_HOURS_UTC"] = "00-24"
+os.environ["AEGIS_BUSINESS_DAYS"] = "0-6"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
