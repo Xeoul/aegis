@@ -1,10 +1,22 @@
-# Deploying the public demo
+# Deploying
 
-The demo runs as a single web service. The repo includes a Render blueprint
-([`render.yaml`](../render.yaml)) with safe defaults, so it deploys in a few clicks on Render's
-free plan.
+## The live demo: GitHub Pages (already set up)
 
-## Render (recommended, free)
+**[xeoul.github.io/aegis](https://xeoul.github.io/aegis/)** is published automatically. On
+every push to `main`, `.github/workflows/pages.yml` runs the tests, builds the static site with
+`demo/build.sh`, smoke-tests it, and pushes it to the `gh-pages` branch. The whole backend,
+including the Cedar policy engine, runs in the visitor's browser as WebAssembly. There's no
+server to pay for, keep awake or secure, and nothing a visitor does leaves their tab. This is
+the link for your portfolio.
+
+If the site ever stops updating, check **Settings → Pages**: it should say
+*Deploy from a branch*, `gh-pages` / `(root)`.
+
+## Optional: the full server on Render
+
+The browser demo can't use the Claude parser (a public page can't hold an API key) or the
+background scheduler. To show the real server, the repo includes a Render blueprint
+([`render.yaml`](../render.yaml)) with safe defaults.
 
 1. Sign in at [render.com](https://render.com) with your GitHub account.
 2. Click **New → Blueprint**, pick this repository, and confirm. Or use the

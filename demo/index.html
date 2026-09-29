@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Live demo of Aegis-JIT: ask for temporary access in plain English and watch the real policy engine decide, route approvals, expire grants and keep a tamper-evident audit trail - running in your browser.">
+    <meta name="description" content="Live demo of Aegis-JIT: ask for temporary access in plain English and watch the real Cedar policy engine decide, route approvals, expire grants and keep a tamper-evident audit trail - running in your browser.">
     <!-- Pyodide (Python compiled to WebAssembly) comes from jsDelivr; everything else,
          including the Aegis source and its Python packages, is served from this site. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none';">
@@ -29,13 +29,13 @@
 
     <div class="intro">
         <p class="lede">Ask for temporary access in plain English. Aegis turns the request into a policy, decides it, sends risky access for a second person's approval, revokes grants when they expire, and records every step in a tamper-evident audit trail.</p>
-        <p class="note">This is the real Aegis API (FastAPI, SQLAlchemy and SQLite) running in your browser as Python compiled to WebAssembly. Everyone in it is fictional, nothing leaves this page, and it starts over when you reload. Requests are read by Aegis's offline keyword parser here; the server version uses Claude.</p>
+        <p class="note">This is the real Aegis API (FastAPI, SQLAlchemy and SQLite) running in your browser as Python compiled to WebAssembly. Everyone in it is fictional, nothing leaves this page, and it starts over when you reload. Decisions come from the real Cedar policy engine, compiled to WebAssembly. Requests are read by Aegis's offline keyword parser here; the server version uses Claude.</p>
     </div>
 
     <div id="boot" class="boot" role="status" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <span id="boot-step">Loading Python&hellip;</span>
-        <span class="boot-hint">About 15 MB the first time, cached after that.</span>
+        <span class="boot-hint">About 20 MB the first time, cached after that.</span>
     </div>
 
     <main id="app" hidden>
@@ -70,12 +70,16 @@
                 <button role="tab" id="tab-requests" aria-controls="view-requests" aria-selected="true">My requests</button>
                 <button role="tab" id="tab-approvals" aria-controls="view-approvals" aria-selected="false" tabindex="-1">Approvals <span class="count" id="approvals-count" hidden></span></button>
                 <button role="tab" id="tab-grants" aria-controls="view-grants" aria-selected="false" tabindex="-1">Active grants</button>
+                <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" tabindex="-1">Alerts</button>
+                <button role="tab" id="tab-review" aria-controls="view-review" aria-selected="false" tabindex="-1">Access review</button>
                 <button role="tab" id="tab-audit" aria-controls="view-audit" aria-selected="false" tabindex="-1">Audit trail</button>
                 <button role="tab" id="tab-catalog" aria-controls="view-catalog" aria-selected="false" tabindex="-1">Resources</button>
             </div>
             <div role="tabpanel" id="view-requests" aria-labelledby="tab-requests" tabindex="0"></div>
             <div role="tabpanel" id="view-approvals" aria-labelledby="tab-approvals" tabindex="0" hidden></div>
             <div role="tabpanel" id="view-grants" aria-labelledby="tab-grants" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-alerts" aria-labelledby="tab-alerts" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-review" aria-labelledby="tab-review" tabindex="0" hidden></div>
             <div role="tabpanel" id="view-audit" aria-labelledby="tab-audit" tabindex="0" hidden></div>
             <div role="tabpanel" id="view-catalog" aria-labelledby="tab-catalog" tabindex="0" hidden></div>
         </section>

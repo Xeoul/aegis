@@ -19,7 +19,9 @@ each decision. That matters more than remembering every feature.
 
 ## A 5-minute live demo
 
-Open the demo a minute early (free hosting sleeps). Then:
+Use **[xeoul.github.io/aegis](https://xeoul.github.io/aegis/)**. It loads in about 10–20
+seconds the first time (it's downloading Python and the Cedar engine) and is instant after
+that. The guided examples do most of this for you. Then:
 
 1. **Bob (SRE):** "Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy."
    → **pending**. Point out that policy *allowed* it, but restricted + admin means a second
@@ -50,6 +52,13 @@ bounded. Cedar then evaluates those fields against the *database's* record of wh
 and what the resource is, which the LLM can't change. There's a test that simulates a fully
 hijacked LLM asking for admin on the KMS keys, and it's still denied. Injection-looking text is
 also flagged and sent to a human. That flagging is defense in depth, not the security boundary.
+
+**The demo runs in the browser? How?**
+Pyodide (CPython compiled to WebAssembly) runs the real FastAPI app in the page, and a small
+bridge hands each API call straight to it. Cedar's Rust core has an official WebAssembly build,
+so the demo uses the same policy engine as the server, not a JavaScript imitation. CI boots the
+built site and checks that its decisions match the server's. There's no backend to attack,
+cost nothing to host, and every visitor gets a private sandbox.
 
 **Why Cedar instead of if-statements?**
 Policy should be data that security teams can review, version and test separately from code. The

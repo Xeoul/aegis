@@ -234,6 +234,10 @@ For the browser, `bridge.py` changes a few things:
 - **Parsing:** requests use the heuristic parser. A public page can't hold an API key.
 - **Threads:** endpoints run inline on the event loop, not in a thread pool.
 - **Scheduler:** the page runs the scheduler's sweep every minute itself; APScheduler isn't loaded.
+- **Policy engine:** `cedarpy` is a native extension, so the page loads Cedar's official
+  WebAssembly build (`@cedar-policy/cedar-wasm`, the same Cedar version). A small stand-in in
+  `bridge.py` forwards the evaluator's four calls to it, so the policies, schema and decisions
+  are the real ones. `build.sh` vendors the build, pinned and checked against npm's integrity hash.
 - **Demo clock:** a clock you can skip forward, so expiry can be shown without waiting.
 - **Tampering:** a button that edits an audit row directly in SQLite, so the chain check has something to catch.
 
@@ -244,6 +248,8 @@ demo/build.sh                       # builds _site/: the page, the source it run
 python -m http.server -d _site      # then open http://localhost:8000
 ```
 
-`.github/workflows/pages.yml` runs the tests and publishes `_site` to the `gh-pages` branch
-on every push to `main`. `tests/test_demo_bridge.py` walks the demo's flows through the
-bridge in CI.
+`.github/workflows/pages.yml` runs the tests, builds `_site`, smoke-tests it and publishes it
+to the `gh-pages` branch on every push to `main`. `tests/test_demo_bridge.py` walks the demo's
+flows through the bridge under CPython. `demo/smoke.mjs` boots the built site under Node with
+Pyodide and cedar-wasm, and checks that the in-browser engine reaches the same decisions as the
+server; CI runs it on every pull request.

@@ -10,3 +10,4 @@ _site/
 coverage.xml
 .mypy_cache/
 .ruff_cache/
+demo/node_modules/

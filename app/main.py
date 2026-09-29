@@ -74,7 +74,9 @@ def root() -> RedirectResponse:
     return RedirectResponse("/ui/")
 
 
-app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.is_dir():  # absent in the in-browser demo, which ships only the Python
+    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 
 @app.get("/health", tags=["meta"])

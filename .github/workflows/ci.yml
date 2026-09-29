@@ -56,6 +56,25 @@ jobs:
           name: coverage
           path: coverage.xml
 
+  demo:
+    # The live demo runs in the browser with Cedar's WebAssembly build instead of cedarpy.
+    # Build the site and drive it under Node + Pyodide to prove the decisions still match.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the demo site
+        run: demo/build.sh _site
+      - name: Smoke-test it under Pyodide + cedar-wasm
+        run: |
+          npm install --no-save --prefix demo pyodide@0.27.7
+          node demo/smoke.mjs _site
+
   docker:
     runs-on: ubuntu-latest
     steps:

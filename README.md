@@ -115,7 +115,7 @@ with Claude.
   the AWS broker, audit chain, detection rules and configuration
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): STRIDE analysis, trust boundaries, known limitations
 - [docs/CONTROLS.md](docs/CONTROLS.md): NIST 800-53 / SOC 2 / ISO 27001 control mapping
-- [docs/DEPLOY.md](docs/DEPLOY.md): one-click public demo on Render, and what changes for production
+- [docs/DEPLOY.md](docs/DEPLOY.md): how the GitHub Pages demo is published, running the full server on Render, and what changes for production
 - [docs/INTERVIEW.md](docs/INTERVIEW.md): 60-second pitch, 5-minute demo script, likely questions
 
 ## Project layout
@@ -137,7 +137,7 @@ app/
   static/          Dashboard (vanilla JS, strict CSP)
 policies/          Cedar schema, policies, role attributes
 scripts/           LocalStack bootstrap
-tests/             110 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+tests/             111 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

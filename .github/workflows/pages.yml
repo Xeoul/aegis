@@ -35,6 +35,15 @@ jobs:
       - name: Build the demo site
         run: demo/build.sh _site
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Smoke-test the built site under Pyodide + cedar-wasm
+        run: |
+          npm install --no-save --prefix demo pyodide@0.27.7
+          node demo/smoke.mjs _site
+
       - name: Publish to the gh-pages branch
         working-directory: _site
         run: |
