@@ -76,9 +76,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
-    requests: Mapped[list["AccessRequest"]] = relationship(
-        back_populates="user", foreign_keys="AccessRequest.user_id"
-    )
+    requests: Mapped[list["AccessRequest"]] = relationship(back_populates="user", foreign_keys="AccessRequest.user_id")
     manager: Mapped["User | None"] = relationship(remote_side=[id], foreign_keys=[manager_id])
 
 
@@ -87,9 +85,7 @@ class Resource(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    sensitivity_level: Mapped[SensitivityLevel] = mapped_column(
-        Enum(SensitivityLevel, native_enum=False, length=20)
-    )
+    sensitivity_level: Mapped[SensitivityLevel] = mapped_column(Enum(SensitivityLevel, native_enum=False, length=20))
     # Department that owns the resource. Confidential and restricted resources are only
     # granted to members of this department (or to cross-department roles, see evaluator).
     owner_department: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -107,9 +103,7 @@ class AccessRequest(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     resource: Mapped[str] = mapped_column(String(120))
     action: Mapped[str] = mapped_column(String(20))
-    status: Mapped[RequestStatus] = mapped_column(
-        Enum(RequestStatus, native_enum=False, length=20), index=True
-    )
+    status: Mapped[RequestStatus] = mapped_column(Enum(RequestStatus, native_enum=False, length=20), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 

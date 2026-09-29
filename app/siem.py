@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import sys
-from datetime import timezone
+from datetime import UTC
 from typing import Any
 
 from app.models import AuditEvent, AuditLog
@@ -54,7 +54,7 @@ def to_ocsf(entry: AuditLog) -> dict[str, Any]:
     event = AuditEvent(entry.event)
     class_uid, class_name, category_uid, category_name = _EVENT_CLASS.get(event, _AUTHORIZE)
     record: dict[str, Any] = {
-        "time": int(entry.timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000),  # stored as naive UTC
+        "time": int(entry.timestamp.replace(tzinfo=UTC).timestamp() * 1000),  # stored as naive UTC
         "class_uid": class_uid,
         "class_name": class_name,
         "category_uid": category_uid,

@@ -70,10 +70,26 @@ class ParseResult:
 # Phrases typical of attempts to steer the parser or the approval process. A match does not
 # deny the request; it removes the auto-grant path so a human looks at it.
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("instruction-override", re.compile(r"\b(ignore|disregard|forget|override)\b.{0,40}\b(instructions?|rules?|prompt|policy|policies)\b", re.I | re.S)),
+    (
+        "instruction-override",
+        re.compile(
+            r"\b(ignore|disregard|forget|override)\b.{0,40}\b(instructions?|rules?|prompt|policy|policies)\b",
+            re.I | re.S,
+        ),
+    ),
     ("role-play", re.compile(r"\b(you are now|act as|pretend (to be|you are)|from now on you)\b", re.I)),
-    ("prompt-probe", re.compile(r"\b(system prompt|developer message|<\s*/?\s*(system|access_request|resource_catalog)\b)", re.I)),
-    ("decision-steering", re.compile(r"\b(auto[- ]?approve|pre[- ]?approved|already approved|approval (is )?not (needed|required)|bypass|skip (the )?(approval|review|policy))\b", re.I)),
+    (
+        "prompt-probe",
+        re.compile(r"\b(system prompt|developer message|<\s*/?\s*(system|access_request|resource_catalog)\b)", re.I),
+    ),
+    (
+        "decision-steering",
+        re.compile(
+            r"\b(auto[- ]?approve|pre[- ]?approved|already approved|approval (is )?not (needed|required)"
+            r"|bypass|skip (the )?(approval|review|policy))\b",
+            re.I,
+        ),
+    ),
     ("output-forging", re.compile(r"[\"']?(allow_reason|duration_hours|\"action\"|\"resource\")[\"']?\s*:", re.I)),
 ]
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -93,8 +109,7 @@ def sanitize(text: str) -> str:
 def build_user_message(text: str, resource_catalog: Sequence[str]) -> str:
     catalog = "\n".join(f"- {sanitize(name)}" for name in sorted(resource_catalog)) or "- (empty)"
     return (
-        f"<resource_catalog>\n{catalog}\n</resource_catalog>\n\n"
-        f"<access_request>\n{sanitize(text)}\n</access_request>"
+        f"<resource_catalog>\n{catalog}\n</resource_catalog>\n\n<access_request>\n{sanitize(text)}\n</access_request>"
     )
 
 
@@ -169,9 +184,7 @@ _ACTION_KEYWORDS: list[tuple[Action, tuple[str, ...]]] = [
     ("write", ("write", "modify", "update", "edit", "change", "deploy", "push", "patch", "insert", "upload")),
 ]
 
-_DURATION_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h|days?|d)\b", re.IGNORECASE
-)
+_DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h|days?|d)\b", re.IGNORECASE)
 _WORD_DURATIONS = [
     (re.compile(r"\b(?:an|one) hour\b", re.I), 1),
     (re.compile(r"\bhalf an hour\b", re.I), 1),
@@ -236,7 +249,7 @@ def _extract_reason(text: str, resource_catalog: Sequence[str]) -> str:
     aliases = {a for name in resource_catalog for a in _resource_aliases(name)}
     # The last "to <verb> ..." clause is usually the purpose ("... to debug a failing job").
     for match in reversed(list(_TO_RE.finditer(text))):
-        clause = text[match.end():]
+        clause = text[match.end() :]
         if not any(clause.lower().startswith(a) for a in aliases):
             return _clean_reason(clause)
     return "No justification provided"

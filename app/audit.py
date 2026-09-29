@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app import siem
 from app.config import settings
 from app.database import utcnow
-from app.models import AuditEvent, AuditLog
+from app.models import AccessRequest, AuditEvent, AuditLog
 
 GENESIS_HASH = "0" * 64
 _PENDING_KEY = "aegis_pending_audit"
@@ -51,6 +51,22 @@ def record(
             resource=resource,
             action=action,
         )
+    )
+
+
+def record_request(
+    db: Session, event: AuditEvent, req: AccessRequest, *, actor_id: int | None, detail: str = ""
+) -> None:
+    """Record an event about an access request, copying its subject, resource and action."""
+    record(
+        db,
+        event,
+        detail=detail,
+        request_id=req.id,
+        user_id=req.user_id,
+        actor_id=actor_id,
+        resource=req.resource,
+        action=req.action,
     )
 
 

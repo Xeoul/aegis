@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis-JIT</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">◆</span> Aegis-JIT <span class="muted">just-in-time access</span></div>
+    <div id="whoami" class="whoami"></div>
+  </header>
+
+  <main>
+    <section id="login" class="card narrow">
+      <h1>Sign in</h1>
+      <p class="muted">Development mode: pick a demo persona. With <code>AEGIS_AUTH_MODE=oidc</code>, tokens come from your identity provider instead.</p>
+      <div id="personas" class="personas"></div>
+      <form id="login-form" class="row">
+        <input id="login-email" type="email" placeholder="or type an email" required>
+        <button type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="app" hidden>
+      <nav class="tabs" role="tablist" id="tabs"></nav>
+
+      <div class="panel" data-tab="request">
+        <div class="card">
+          <h2>Request access</h2>
+          <p class="muted">Describe what you need in plain English. The parser extracts it, the Cedar policy engine decides.</p>
+          <form id="request-form">
+            <textarea id="request-text" rows="3" required minlength="5"
+              placeholder="I need read access to prod-db for 4 hours to debug a failing migration"></textarea>
+            <div class="row between">
+              <label class="check"><input type="checkbox" id="break-glass"> Break-glass (emergency: skips approval, 1h max, reviewed afterwards)</label>
+              <button type="submit">Submit request</button>
+            </div>
+          </form>
+          <div id="decision"></div>
+        </div>
+      </div>
+
+      <div class="panel" data-tab="mine" hidden>
+        <div class="card"><h2>Active grants</h2><div id="grants"></div></div>
+        <div class="card"><h2>My requests</h2><div id="requests"></div></div>
+        <div id="creds"></div>
+      </div>
+
+      <div class="panel" data-tab="approvals" hidden>
+        <div class="card"><h2>Approval queue</h2><p class="muted">Requests you are eligible to decide. You never see your own.</p><div id="approvals"></div></div>
+      </div>
+
+      <div class="panel" data-tab="alerts" hidden>
+        <div class="card"><h2>Security alerts</h2><div id="alerts"></div></div>
+      </div>
+
+      <div class="panel" data-tab="audit" hidden>
+        <div class="card">
+          <div class="row between"><h2>Audit trail</h2><button id="verify" class="secondary">Verify hash chain</button></div>
+          <div id="chain"></div>
+          <div id="audit"></div>
+        </div>
+      </div>
+
+      <div class="panel" data-tab="review" hidden>
+        <div class="card">
+          <div class="row between"><h2>Access review</h2><a id="csv" class="button secondary" href="#">Download CSV</a></div>
+          <div id="review"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

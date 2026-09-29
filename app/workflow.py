@@ -1,11 +1,10 @@
 """Grant lifecycle: approvals, separation of duties, break-glass, revocation, leavers/movers."""
 
+import logging
 from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-import logging
 
 from app import audit, credentials
 from app.database import utcnow
@@ -48,14 +47,11 @@ def activate(db: Session, request: AccessRequest, actor_id: int | None, detail: 
     now = utcnow()
     request.status = RequestStatus.ACTIVE
     request.expires_at = now + timedelta(hours=request.duration_hours)
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.ACCESS_GRANTED,
-        request_id=request.id,
-        user_id=request.user_id,
+        request,
         actor_id=actor_id,
-        resource=request.resource,
-        action=request.action,
         detail=f"Granted for {request.duration_hours}h until {request.expires_at.isoformat()}Z. {detail}".strip(),
     )
 
@@ -63,14 +59,11 @@ def activate(db: Session, request: AccessRequest, actor_id: int | None, detail: 
 def start_approval(db: Session, request: AccessRequest) -> None:
     request.status = RequestStatus.PENDING_APPROVAL
     request.approval_deadline = utcnow() + timedelta(hours=APPROVAL_WINDOW_HOURS)
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.APPROVAL_REQUIRED,
-        request_id=request.id,
-        user_id=request.user_id,
+        request,
         actor_id=request.user_id,
-        resource=request.resource,
-        action=request.action,
         detail=f"Awaiting approval until {request.approval_deadline.isoformat()}Z.",
     )
 
@@ -78,14 +71,11 @@ def start_approval(db: Session, request: AccessRequest) -> None:
 def break_glass(db: Session, request: AccessRequest, reason: str) -> None:
     request.break_glass = True
     request.duration_hours = min(request.duration_hours, BREAK_GLASS_MAX_HOURS)
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.BREAK_GLASS_USED,
-        request_id=request.id,
-        user_id=request.user_id,
+        request,
         actor_id=request.user_id,
-        resource=request.resource,
-        action=request.action,
         detail=f"Emergency access without prior approval, capped at {request.duration_hours}h. "
         f"Requires post-incident review. Justification: {reason}",
     )
@@ -100,14 +90,11 @@ def revoke(db: Session, grant: AccessRequest, actor_id: int | None, reason: str,
     grant.revoked_at = now
     grant.revoked_by_id = actor_id
     grant.revoke_reason = reason
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.ACCESS_REVOKED,
-        request_id=grant.id,
-        user_id=grant.user_id,
+        grant,
         actor_id=actor_id,
-        resource=grant.resource,
-        action=grant.action,
         detail=reason,
     )
     if early and grant.credentials_issued_at is not None:
@@ -118,23 +105,24 @@ def _revoke_cloud_sessions(db: Session, grant: AccessRequest, actor_id: int | No
     resource = db.scalar(select(Resource).where(Resource.name == grant.resource))
     if resource is None or not resource.aws_role_arn:
         return
-    common = dict(request_id=grant.id, user_id=grant.user_id, actor_id=actor_id, resource=grant.resource, action=grant.action)
     try:
         credentials.revoke_sessions(grant, resource)
-    except Exception as exc:  # noqa: BLE001 - any AWS failure must be surfaced, not swallowed
+    except Exception as exc:
         logger.exception("Failed to revoke AWS sessions for grant %s", grant.id)
-        audit.record(
+        audit.record_request(
             db,
             AuditEvent.CLOUD_REVOCATION_FAILED,
+            grant,
+            actor_id=actor_id,
             detail=f"Could not deny sessions on {resource.aws_role_arn}: {exc}. Manual action required.",
-            **common,
         )
         return
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.CLOUD_SESSIONS_REVOKED,
+        grant,
+        actor_id=actor_id,
         detail=f"Denied sessions '{credentials.session_name(grant)}' on {resource.aws_role_arn}.",
-        **common,
     )
 
 
@@ -154,14 +142,11 @@ def revoke_all_for_user(db: Session, user: User, actor_id: int | None, reason: s
             req.decided_by_id = actor_id
             req.decided_at = utcnow()
             req.decision_comment = reason
-            audit.record(
+            audit.record_request(
                 db,
                 AuditEvent.REQUEST_REJECTED,
-                request_id=req.id,
-                user_id=req.user_id,
+                req,
                 actor_id=actor_id,
-                resource=req.resource,
-                action=req.action,
                 detail=reason,
             )
     return len(open_requests)

@@ -17,11 +17,12 @@ session name through ``aws:userid``, so it blocks sessions already in circulatio
 :func:`prune_revocations` removes statements once every session they could match has expired.
 """
 
+import contextlib
 import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.database import utcnow
@@ -35,7 +36,13 @@ REVOCATION_POLICY_NAME = "AegisRevokedSessions"
 # IAM actions allowed in the session policy, per AWS service and Aegis action.
 _READ = {
     "s3": ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
-    "dynamodb": ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:DescribeTable"],
+    "dynamodb": [
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+    ],
     "secretsmanager": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
     "kms": ["kms:DescribeKey", "kms:Decrypt"],
 }
@@ -171,10 +178,8 @@ def _load_revocations(iam: Any, role: str) -> list[dict[str, Any]]:
 
 def _save_revocations(iam: Any, role: str, statements: list[dict[str, Any]]) -> None:
     if not statements:
-        try:
+        with contextlib.suppress(iam.exceptions.NoSuchEntityException):
             iam.delete_role_policy(RoleName=role, PolicyName=REVOCATION_POLICY_NAME)
-        except iam.exceptions.NoSuchEntityException:
-            pass
         return
     iam.put_role_policy(
         RoleName=role,
@@ -189,7 +194,7 @@ def revoke_sessions(grant: AccessRequest, resource: Resource) -> None:
         return
     iam = _client("iam")
     role = _role_name(resource.aws_role_arn)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     sid = f"AegisRevoke{grant.id}"
     statements = [s for s in _load_revocations(iam, role) if s.get("Sid") != sid]
     statements.append(
@@ -214,11 +219,13 @@ def prune_revocations(role_arn: str) -> int:
     iam = _client("iam")
     role = _role_name(role_arn)
     statements = _load_revocations(iam, role)
-    horizon = datetime.now(timezone.utc) - timedelta(seconds=_max_session_seconds())
+    horizon = datetime.now(UTC) - timedelta(seconds=_max_session_seconds())
     keep = []
     for stmt in statements:
         issued_before = stmt.get("Condition", {}).get("DateLessThan", {}).get("aws:TokenIssueTime")
-        revoked_at = datetime.strptime(issued_before, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) if issued_before else None
+        revoked_at = (
+            datetime.strptime(issued_before, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC) if issued_before else None
+        )
         if revoked_at is None or revoked_at > horizon:
             keep.append(stmt)
     if len(keep) != len(statements):

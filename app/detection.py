@@ -94,7 +94,8 @@ def _repeated_denials(db: Session, req: AccessRequest, resource: Resource | None
         return Finding(
             "repeated-denials",
             AlertSeverity.MEDIUM,
-            f"{count} denied requests in the last {int(DENIAL_WINDOW.total_seconds() // 60)} minutes (possible probing).",
+            f"{count} denied requests in the last {DENIAL_WINDOW.total_seconds() // 60:.0f} minutes "
+            "(possible probing).",
         )
     return None
 
@@ -165,15 +166,12 @@ def scan(db: Session, req: AccessRequest, resource: Resource | None, now: dateti
         )
         db.add(alert)
         db.flush()
-        audit.record(
+        audit.record_request(
             db,
             AuditEvent.ALERT_RAISED,
-            request_id=req.id,
-            user_id=req.user_id,
-            resource=req.resource,
-            action=req.action,
+            req,
+            actor_id=None,
             detail=f"alert={alert.id} rule={finding.rule} severity={finding.severity.value}: {finding.detail}",
         )
         raised.append(alert)
     return raised
-

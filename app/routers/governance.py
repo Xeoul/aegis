@@ -48,7 +48,9 @@ def resolve_alert(
     if alert is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Alert {alert_id} not found")
     if alert.user_id == user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Separation of duties: you cannot resolve an alert about yourself")
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Separation of duties: you cannot resolve an alert about yourself"
+        )
     if alert.status != AlertStatus.OPEN:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Alert is already {alert.status.value}")
     alert.status = AlertStatus.FALSE_POSITIVE if payload.false_positive else AlertStatus.RESOLVED
@@ -77,7 +79,10 @@ def build_access_review(db: Session, days: int) -> AccessReviewReport:
     )
     open_alerts = Counter(db.scalars(select(Alert.user_id).where(Alert.status == AlertStatus.OPEN)))
     unreviewed = Counter(
-        r.user_id for r in db.scalars(select(AccessRequest).where(AccessRequest.break_glass.is_(True), AccessRequest.reviewed_at.is_(None)))
+        r.user_id
+        for r in db.scalars(
+            select(AccessRequest).where(AccessRequest.break_glass.is_(True), AccessRequest.reviewed_at.is_(None))
+        )
     )
     approvals = Counter(r.decided_by_id for r in period if r.decided_by_id and r.status != RequestStatus.REJECTED)
 

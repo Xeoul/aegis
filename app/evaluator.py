@@ -173,5 +173,7 @@ def evaluate(
     granted = min(requested, cap)
     reasons = [explain(a) for a in determining]
     if granted < requested:
-        reasons.append(f"Duration reduced from {requested}h to the {resource.sensitivity_level.value} maximum of {cap}h.")
+        reasons.append(
+            f"Duration reduced from {requested}h to the {resource.sensitivity_level.value} maximum of {cap}h."
+        )
     return EvaluationResult("ALLOW", reasons, granted, requires_approval, ids)

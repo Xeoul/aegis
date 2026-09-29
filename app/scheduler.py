@@ -1,7 +1,7 @@
 """Background jobs: revoke expired grants and expire approvals nobody acted on."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
@@ -25,7 +25,8 @@ def revoke_expired_grants() -> int:
             )
         ).all()
         for grant in expired:
-            assert grant.expires_at is not None  # guaranteed by the query
+            if grant.expires_at is None:  # excluded by the query; keeps the type checker honest
+                continue
             workflow.revoke(
                 db,
                 grant,
@@ -50,13 +51,11 @@ def expire_stale_requests() -> int:
         ).all()
         for req in stale:
             req.status = RequestStatus.EXPIRED
-            audit.record(
+            audit.record_request(
                 db,
                 AuditEvent.REQUEST_EXPIRED,
-                request_id=req.id,
-                user_id=req.user_id,
-                resource=req.resource,
-                action=req.action,
+                req,
+                actor_id=None,
                 detail="No approver acted before the approval deadline.",
             )
         audit.commit(db)
@@ -71,9 +70,11 @@ def prune_cloud_revocations() -> int:
         roles = set(db.scalars(select(Resource.aws_role_arn).where(Resource.aws_role_arn.is_not(None))))
     removed = 0
     for role_arn in roles:
+        if not role_arn:
+            continue
         try:
             removed += credentials.prune_revocations(role_arn)
-        except Exception:  # noqa: BLE001 - keep sweeping other roles
+        except Exception:
             logger.exception("Could not prune revocations on %s", role_arn)
     return removed
 
@@ -93,6 +94,6 @@ def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
         id=SWEEP_JOB_ID,
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(timezone.utc),  # also sweep once at startup
+        next_run_time=datetime.now(UTC),  # also sweep once at startup
     )
     return scheduler

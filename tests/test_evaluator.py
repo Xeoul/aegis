@@ -22,7 +22,9 @@ ENGINEER = _user("engineer")
 
 
 def test_policies_validate_against_schema():
-    result = cedarpy.validate_policies((POLICY_DIR / "aegis.cedar").read_text(), (POLICY_DIR / "aegis.cedarschema").read_text())
+    result = cedarpy.validate_policies(
+        (POLICY_DIR / "aegis.cedar").read_text(), (POLICY_DIR / "aegis.cedarschema").read_text()
+    )
     assert result.validation_passed, result.errors
 
 
@@ -65,8 +67,15 @@ def test_cross_department_role_allowed():
 
 def test_every_failing_guardrail_is_reported():
     intern = _user("intern", "Marketing")
-    result = evaluate(intern, _res(SensitivityLevel.RESTRICTED), _policy(action="admin", reason="No justification provided"))
-    assert set(result.policy_ids) >= {"clearance", "privileged-actions", "department-boundary", "justification-required"}
+    result = evaluate(
+        intern, _res(SensitivityLevel.RESTRICTED), _policy(action="admin", reason="No justification provided")
+    )
+    assert set(result.policy_ids) >= {
+        "clearance",
+        "privileged-actions",
+        "department-boundary",
+        "justification-required",
+    }
     assert not any("approval-required" in r for r in result.reasons)
 
 

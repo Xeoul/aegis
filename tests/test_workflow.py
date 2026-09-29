@@ -32,7 +32,9 @@ def test_high_risk_request_waits_for_approval(client, auth):
     tasks = client.get("/approvals", headers=auth(MAYA)).json()
     assert [(t["kind"], t["request"]["id"]) for t in tasks] == [("approval", body["request_id"])]
 
-    resp = client.post(f"/requests/{body['request_id']}/approve", json={"comment": "Incident INC-7"}, headers=auth(MAYA))
+    resp = client.post(
+        f"/requests/{body['request_id']}/approve", json={"comment": "Incident INC-7"}, headers=auth(MAYA)
+    )
     assert resp.status_code == 200, resp.text
     grant = resp.json()
     assert grant["status"] == "ACTIVE" and grant["decided_by_id"] == 10 and grant["duration_hours"] == 2
@@ -79,7 +81,9 @@ def test_self_approval_blocked_even_for_approver_roles(client, auth):
 
 def test_reject(client, auth):
     body = _submit(client, auth(BOB), K8S_ADMIN)
-    resp = client.post(f"/requests/{body['request_id']}/reject", json={"comment": "use the runbook"}, headers=auth(MAYA))
+    resp = client.post(
+        f"/requests/{body['request_id']}/reject", json={"comment": "use the runbook"}, headers=auth(MAYA)
+    )
     assert resp.json()["status"] == "REJECTED"
     again = client.post(f"/requests/{body['request_id']}/approve", json={"comment": "oops"}, headers=auth(MAYA))
     assert again.status_code == 409
@@ -115,8 +119,12 @@ def test_break_glass_grants_immediately_and_requires_review(client, auth):
 
     tasks = client.get("/approvals", headers=auth(EVE)).json()
     assert [t["kind"] for t in tasks] == ["break_glass_review"]
-    assert client.post(f"/requests/{body['request_id']}/review", json={"comment": "self"}, headers=bob).status_code == 403
-    resp = client.post(f"/requests/{body['request_id']}/review", json={"comment": "Justified, INC-9"}, headers=auth(EVE))
+    assert (
+        client.post(f"/requests/{body['request_id']}/review", json={"comment": "self"}, headers=bob).status_code == 403
+    )
+    resp = client.post(
+        f"/requests/{body['request_id']}/review", json={"comment": "Justified, INC-9"}, headers=auth(EVE)
+    )
     assert resp.json()["reviewed_by_id"] == 5
     assert client.get("/approvals", headers=auth(EVE)).json() == []
     assert "BREAK_GLASS_REVIEWED" in _events(client, auth, body["request_id"])
@@ -130,11 +138,16 @@ def test_break_glass_does_not_bypass_policy(client, auth):
 def test_manual_revoke(client, auth):
     alice = auth(ALICE)
     body = _submit(client, alice, "read prod-db for 4 hours to debug")
-    assert client.post(f"/grants/{body['request_id']}/revoke", json={"reason": "nope"}, headers=auth(FRANK)).status_code == 403
+    assert (
+        client.post(f"/grants/{body['request_id']}/revoke", json={"reason": "nope"}, headers=auth(FRANK)).status_code
+        == 403
+    )
     resp = client.post(f"/grants/{body['request_id']}/revoke", json={"reason": "done early"}, headers=alice)
     assert resp.json()["status"] == "REVOKED" and resp.json()["revoked_by_id"] == 1
     assert client.get("/active-grants", headers=alice).json() == []
-    assert client.post(f"/grants/{body['request_id']}/revoke", json={"reason": "again"}, headers=alice).status_code == 409
+    assert (
+        client.post(f"/grants/{body['request_id']}/revoke", json={"reason": "again"}, headers=alice).status_code == 409
+    )
 
 
 def test_leaver_loses_all_access(client, auth):

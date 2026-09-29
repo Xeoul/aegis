@@ -1,7 +1,7 @@
 """Populate the database with mock users and resources.
 
-    python seed_data.py            # add any missing seed rows (idempotent)
-    python seed_data.py --reset    # drop all tables first, then seed
+python seed_data.py            # add any missing seed rows (idempotent)
+python seed_data.py --reset    # drop all tables first, then seed
 """
 
 import argparse
@@ -33,6 +33,7 @@ USERS = [
 def email_for(name: str) -> str:
     return f"{name.lower().replace(' ', '.')}@{EMAIL_DOMAIN}"
 
+
 RESOURCES = [
     # name, sensitivity, owner department
     ("company-wiki", SensitivityLevel.PUBLIC, None),
@@ -54,7 +55,11 @@ RESOURCES = [
 AWS_BACKING = {
     "s3-data-lake": ("s3", "arn:aws:s3:::aegis-data-lake", "aegis-jit-data-lake"),
     "customer-pii-db": ("dynamodb", "arn:aws:dynamodb:{region}:{acct}:table/customer-pii", "aegis-jit-customer-pii"),
-    "payroll-system": ("secretsmanager", "arn:aws:secretsmanager:{region}:{acct}:secret:payroll-db-*", "aegis-jit-payroll"),
+    "payroll-system": (
+        "secretsmanager",
+        "arn:aws:secretsmanager:{region}:{acct}:secret:payroll-db-*",
+        "aegis-jit-payroll",
+    ),
 }
 
 
@@ -107,7 +112,7 @@ def seed(reset: bool = False) -> None:
         print(
             "\nGet a token (dev mode):\n"
             "  curl -s localhost:8000/auth/dev-token -H 'content-type: application/json' "
-            f"-d '{{\"email\": \"{email_for(USERS[0][0])}\"}}'"
+            f'-d \'{{"email": "{email_for(USERS[0][0])}"}}\''
         )
 
 

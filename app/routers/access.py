@@ -73,13 +73,16 @@ def request_access(
     db.add(record)
     db.flush()
 
-    common = dict(request_id=record.id, user_id=user.id, actor_id=user.id, resource=policy.resource, action=policy.action)
     flag_note = f" risk_flags={','.join(flags)}" if flags else ""
-    audit.record(
-        db, AuditEvent.REQUEST_SUBMITTED, detail=f'[{parsed.parser}]{flag_note} "{payload.request_text}"', **common
+    audit.record_request(
+        db,
+        AuditEvent.REQUEST_SUBMITTED,
+        record,
+        actor_id=user.id,
+        detail=f'[{parsed.parser}]{flag_note} "{payload.request_text}"',
     )
     if not result.allowed:
-        audit.record(db, AuditEvent.ACCESS_DENIED, detail=" ".join(result.reasons), **common)
+        audit.record_request(db, AuditEvent.ACCESS_DENIED, record, actor_id=user.id, detail=" ".join(result.reasons))
     elif needs_approval and payload.break_glass and not flags:
         workflow.break_glass(db, record, policy.allow_reason)
     elif needs_approval:
@@ -122,7 +125,9 @@ def my_requests(user: User = Depends(get_current_user), db: Session = Depends(ge
 
 
 @router.get("/requests/{request_id}", response_model=RequestOut)
-def get_request(request_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> AccessRequest:
+def get_request(
+    request_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> AccessRequest:
     req, resource = load_request(db, request_id)
     if req.user_id != user.id and not is_oversight(user) and not workflow.approver_eligibility(user, req, resource)[0]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Request {request_id} not found")
@@ -192,14 +197,11 @@ def issue_credentials(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
     grant.credentials_issued_at = utcnow()
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.CREDENTIALS_ISSUED,
-        request_id=grant.id,
-        user_id=user.id,
+        grant,
         actor_id=user.id,
-        resource=grant.resource,
-        action=grant.action,
         # The access key id is safe to log and lets CloudTrail be joined back to this grant.
         detail=f"STS session {issued.session_name} ({issued.access_key_id}) on {issued.role_arn} "
         f"until {issued.expiration.isoformat()}; actions {issued.session_policy['Statement'][0]['Action']}.",

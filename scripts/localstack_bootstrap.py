@@ -10,13 +10,14 @@ resource: every session Aegis issues is narrowed by a session policy to the one 
 
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
 import boto3
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from seed_data import AWS_BACKING, aws_config  # noqa: E402
+from seed_data import AWS_BACKING, aws_config
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
@@ -53,7 +54,8 @@ def main() -> None:
         BillingMode="PAY_PER_REQUEST",
     )
     boto3.client("secretsmanager", region_name=REGION).create_secret(
-        Name="payroll-db-credentials", SecretString=json.dumps({"user": "payroll", "password": "demo-only"})
+        Name="payroll-db-credentials",
+        SecretString=json.dumps({"user": "payroll", "password": secrets.token_urlsafe(24)}),
     )
 
     for name, (service, _, role_name) in AWS_BACKING.items():
@@ -64,7 +66,10 @@ def main() -> None:
             RoleName=role_name,
             PolicyName="ResourceAccess",
             PolicyDocument=json.dumps(
-                {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": f"{service}:*", "Resource": resources}]}
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [{"Effect": "Allow", "Action": f"{service}:*", "Resource": resources}],
+                }
             ),
         )
         print(f"{name:<18} {cfg['aws_role_arn']}")

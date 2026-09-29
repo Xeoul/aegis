@@ -3,12 +3,15 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
+from app import siem
 from app.config import settings
 from app.database import init_db
-from app import siem
 from app.routers import access, approvals, audit, auth, governance, users
 from app.scheduler import create_scheduler
 
@@ -41,6 +44,33 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+
+# The dashboard loads only same-origin files, so it can run under a strict CSP. Swagger UI at
+# /docs pulls assets from a CDN, so the CSP is scoped to /ui.
+UI_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    if request.url.path.startswith("/ui"):
+        response.headers["Content-Security-Policy"] = UI_CSP
+    return response
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/ui/")
+
+
+app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
 
 
 @app.get("/health", tags=["meta"])
