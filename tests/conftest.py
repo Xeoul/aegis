@@ -20,6 +20,10 @@ BOB = email_for("Bob Martinez")  # Engineering sre
 FRANK = email_for("Frank Lee")  # Marketing intern
 GRACE = email_for("Grace Kim")  # Compliance auditor
 IRIS = email_for("Iris Novak")  # IT admin (identity administrator)
+MAYA = email_for("Maya Torres")  # Engineering manager; manages Alice, Bob, Hank
+EVE = email_for("Eve Johansson")  # Security engineer
+DAN = email_for("Dan Okafor")  # Finance manager
+HANK = email_for("Hank Patel")  # Engineering contractor
 
 
 @pytest.fixture()

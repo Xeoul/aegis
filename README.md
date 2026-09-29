@@ -45,7 +45,13 @@ curl -s localhost:8000/audit-logs/verify -H "Authorization: Bearer $GRACE"
 | `GET` | `/me` | authenticated | The caller's identity |
 | `POST` | `/users` | admin | Provision a user |
 | `GET` | `/users`, `/resources` | authenticated | Directory and resource catalog |
-| `POST` | `/request-access` | authenticated | Submit `{request_text}` as the caller; returns the parsed policy, decision and reasons |
+| `PATCH` | `/users/{id}` | admin (not on self) | Mover/leaver changes; revokes the user's open access |
+| `POST` | `/request-access` | authenticated | Submit `{request_text, break_glass?}` as the caller; returns the parsed policy, decision and reasons |
+| `GET` | `/requests`, `/requests/{id}` | requester, eligible approvers, oversight | Full lifecycle of a request |
+| `GET` | `/approvals` | authenticated | Requests you may approve and break-glass grants you must review |
+| `POST` | `/requests/{id}/approve`, `/reject` | eligible approver | Decide a pending request (`{comment}`) |
+| `POST` | `/requests/{id}/review` | eligible approver | Post-incident review of a break-glass grant |
+| `POST` | `/grants/{id}/revoke` | grantee, eligible approver, security | End a grant early (`{reason}`) |
 | `GET` | `/active-grants` | authenticated | Your unexpired grants (oversight roles see all, `?user_id=`) |
 | `GET` | `/audit-logs` | auditor, security engineer, admin | Hash-chained history, newest first (`?user_id=`, `?event=`, `?limit=`) |
 | `GET` | `/audit-logs/verify` | auditor, security engineer, admin | Recompute the chain and report the first tampered entry |
@@ -64,6 +70,31 @@ All timestamps are UTC.
 - **Least privilege for administrators.** `is_admin` lets a user provision identities and read
   the audit trail. It grants no access to resources; admins go through the same request flow.
 
+## Grant lifecycle
+
+```
+                    policy DENY ─────────────────────────────► DENIED
+submit ─► evaluate ─┤ ALLOW, low risk ──────────────────────────► ACTIVE ─► REVOKED
+                    │ ALLOW, restricted or delete/admin ─► PENDING_APPROVAL ─┬─ approve ─► ACTIVE
+                    │                                                        ├─ reject ──► REJECTED
+                    │                                                        └─ 24h ─────► EXPIRED
+                    └ ALLOW + break_glass ─► ACTIVE (1h max, needs review afterwards)
+```
+
+- **Approval.** Restricted resources and `delete`/`admin` actions need a second person. The
+  policy is evaluated again when the approver acts, in case the requester's attributes
+  changed in the meantime.
+- **Who can approve (separation of duties).** Never the requester. Allowed approvers are the
+  requester's manager, a `manager` in the department that owns the resource, or a
+  `security engineer`. Identity admins and auditors can't approve: provisioning, approving and
+  auditing are kept apart.
+- **Break-glass.** Emergency access skips approval but still has to pass the policy. It is
+  capped at 1 hour and stays in the approvers' queue until someone reviews it.
+- **Revocation.** Grants end when they expire (checked every minute), when revoked early, or
+  on a joiner/mover/leaver change. Deactivating a user revokes their grants and cancels their
+  pending requests. Changing their department, role, manager or admin flag does the same.
+  Admins cannot edit their own account.
+
 ## Tamper-evident audit trail
 
 Every audit entry stores `prev_hash` and `hash = HMAC-SHA256(AEGIS_AUDIT_KEY, prev_hash ||
@@ -79,13 +110,15 @@ app/
   config.py      Settings from environment variables
   auth.py        JWT verification (dev issuer or OIDC/JWKS), role checks
   audit.py       HMAC hash-chained audit writer and verifier
+  workflow.py    Approver eligibility, activation, break-glass, revocation, leaver/mover handling
+  routers/       HTTP endpoints: auth, users, access, approvals, audit
   database.py    SQLite engine, session factory, get_db dependency
   models.py      User, Resource, AccessRequest, AuditLog
   schemas.py     Pydantic I/O models: AccessRequestIn, ParsedPolicy, ABACPolicy, ...
   llm_parser.py  Natural language -> ParsedPolicy (Claude with structured outputs, or heuristic)
   evaluator.py   ABAC rules -> ALLOW / DENY with reasons
-  scheduler.py   APScheduler job: ACTIVE grants past expires_at -> REVOKED
-  main.py        FastAPI app and lifespan (starts and stops the scheduler)
+  scheduler.py   APScheduler sweep: expired grants -> REVOKED, stale approvals -> EXPIRED
+  main.py        FastAPI app, lifespan (starts and stops the scheduler), router wiring
 seed_data.py     Mock users and resources (idempotent; --reset to wipe)
 tests/           pytest suite (runs offline)
 ```

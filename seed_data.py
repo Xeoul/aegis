@@ -14,17 +14,18 @@ from app.models import Resource, SensitivityLevel, User
 EMAIL_DOMAIN = "aegis.example"
 
 USERS = [
-    # name, department, role, is_admin
-    ("Alice Chen", "Engineering", "engineer", False),
-    ("Bob Martinez", "Engineering", "sre", False),
-    ("Carol Singh", "Finance", "analyst", False),
-    ("Dan Okafor", "Finance", "manager", False),
-    ("Eve Johansson", "Security", "security engineer", False),
-    ("Frank Lee", "Marketing", "intern", False),
-    ("Grace Kim", "Compliance", "auditor", False),
-    ("Hank Patel", "Engineering", "contractor", False),
+    # name, department, role, is_admin, manager name
+    ("Alice Chen", "Engineering", "engineer", False, "Maya Torres"),
+    ("Bob Martinez", "Engineering", "sre", False, "Maya Torres"),
+    ("Carol Singh", "Finance", "analyst", False, "Dan Okafor"),
+    ("Dan Okafor", "Finance", "manager", False, None),
+    ("Eve Johansson", "Security", "security engineer", False, None),
+    ("Frank Lee", "Marketing", "intern", False, None),
+    ("Grace Kim", "Compliance", "auditor", False, None),
+    ("Hank Patel", "Engineering", "contractor", False, "Maya Torres"),
     # Identity administrator: can provision users but holds no special resource access.
-    ("Iris Novak", "IT", "it admin", True),
+    ("Iris Novak", "IT", "it admin", True, None),
+    ("Maya Torres", "Engineering", "manager", False, None),
 ]
 
 
@@ -55,9 +56,14 @@ def seed(reset: bool = False) -> None:
         existing_resources = set(db.scalars(select(Resource.name)))
         db.add_all(
             User(name=n, email=email_for(n), department=d, role=r, is_admin=a)
-            for n, d, r, a in USERS
+            for n, d, r, a, _ in USERS
             if email_for(n) not in existing_users
         )
+        db.flush()
+        by_email = {u.email: u for u in db.scalars(select(User))}
+        for n, *_, manager in USERS:
+            if manager:
+                by_email[email_for(n)].manager_id = by_email[email_for(manager)].id
         db.add_all(
             Resource(name=n, sensitivity_level=s, owner_department=o)
             for n, s, o in RESOURCES
@@ -67,8 +73,9 @@ def seed(reset: bool = False) -> None:
 
         print("Users:")
         for u in db.scalars(select(User).order_by(User.id)):
-            admin = " (admin)" if u.is_admin else ""
-            print(f"  {u.id:>3}  {u.email:<28} {u.department:<12} {u.role}{admin}")
+            extra = " (admin)" if u.is_admin else ""
+            extra += f" reports to {u.manager_id}" if u.manager_id else ""
+            print(f"  {u.id:>3}  {u.email:<28} {u.department:<12} {u.role}{extra}")
         print("\nResources:")
         for r in db.scalars(select(Resource).order_by(Resource.id)):
             print(f"  {r.id:>3}  {r.name:<20} {r.sensitivity_level.value:<13} {r.owner_department or '-'}")

@@ -10,6 +10,9 @@ A request is ALLOWED only if every rule passes; each failing rule contributes a 
 5. Justification: restricted resources require a stated business reason.
 
 Approved durations are capped per sensitivity level rather than denied outright.
+
+An ALLOW is not always an immediate grant: restricted resources and privileged actions are
+marked ``requires_approval`` and wait for a second person (see ``app.workflow``).
 """
 
 from dataclasses import dataclass, field
@@ -47,19 +50,23 @@ MAX_DURATION_HOURS: dict[SensitivityLevel, int] = {
 
 NO_JUSTIFICATION = "no justification provided"
 
+# Emergency (break-glass) grants skip approval, so they are kept very short.
+BREAK_GLASS_MAX_HOURS = 1
+
 
 @dataclass
 class EvaluationResult:
     decision: Decision
     reasons: list[str] = field(default_factory=list)
     granted_duration_hours: int = 0
+    requires_approval: bool = False
 
     @property
     def allowed(self) -> bool:
         return self.decision == "ALLOW"
 
 
-def _norm(value: str) -> str:
+def normalize(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").split())
 
 
@@ -67,7 +74,7 @@ def evaluate(user: User, resource: Resource | None, policy: ParsedPolicy) -> Eva
     if resource is None:
         return EvaluationResult("DENY", [f"Resource '{policy.resource}' is not in the resource catalog."])
 
-    role = _norm(user.role)
+    role = normalize(user.role)
     level = resource.sensitivity_level
     clearance = ROLE_CLEARANCE.get(role, SensitivityLevel.PUBLIC)
     denials: list[str] = []
@@ -85,7 +92,7 @@ def evaluate(user: User, resource: Resource | None, policy: ParsedPolicy) -> Eva
     if (
         level in DEPARTMENT_BOUND_LEVELS
         and resource.owner_department
-        and _norm(user.department) != _norm(resource.owner_department)
+        and normalize(user.department) != normalize(resource.owner_department)
         and role not in CROSS_DEPARTMENT_ROLES
     ):
         denials.append(
@@ -109,4 +116,7 @@ def evaluate(user: User, resource: Resource | None, policy: ParsedPolicy) -> Eva
     ]
     if granted < requested:
         reasons.append(f"Duration reduced from {requested}h to the {level.value} maximum of {cap}h.")
-    return EvaluationResult("ALLOW", reasons, granted)
+    requires_approval = level == SensitivityLevel.RESTRICTED or policy.action in PRIVILEGED_ACTIONS
+    if requires_approval:
+        reasons.append("Restricted resources and privileged actions need a second person to approve.")
+    return EvaluationResult("ALLOW", reasons, granted, requires_approval)
