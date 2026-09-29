@@ -16,9 +16,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import siem
 from app.config import settings
 from app.database import utcnow
-from app.models import AuditEvent, AuditLog
+from app.models import AccessRequest, AuditEvent, AuditLog
 
 GENESIS_HASH = "0" * 64
 _PENDING_KEY = "aegis_pending_audit"
@@ -53,20 +54,39 @@ def record(
     )
 
 
+def record_request(
+    db: Session, event: AuditEvent, req: AccessRequest, *, actor_id: int | None, detail: str = ""
+) -> None:
+    """Record an event about an access request, copying its subject, resource and action."""
+    record(
+        db,
+        event,
+        detail=detail,
+        request_id=req.id,
+        user_id=req.user_id,
+        actor_id=actor_id,
+        resource=req.resource,
+        action=req.action,
+    )
+
+
 def commit(db: Session) -> None:
     """Commit the session together with any queued audit entries, chained in order."""
     pending: list[dict[str, Any]] = db.info.pop(_PENDING_KEY, [])
     if not pending:
         db.commit()
         return
+    written = []
     with _chain_lock:
         prev = db.scalar(select(AuditLog.hash).order_by(AuditLog.id.desc()).limit(1)) or GENESIS_HASH
         for fields in pending:
             entry = AuditLog(timestamp=utcnow(), prev_hash=prev, **fields)
             entry.hash = compute_hash(prev, entry)
             db.add(entry)
+            written.append(entry)
             prev = entry.hash
         db.commit()
+    siem.emit(written)  # only after the commit, so the SIEM never sees events that rolled back
 
 
 def _canonical(entry: AuditLog) -> bytes:

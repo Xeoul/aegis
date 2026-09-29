@@ -240,6 +240,17 @@ button:disabled { cursor: progress; opacity: 0.6; }
 .quote { margin: 6px 0 0; font-size: 14px; }
 .meta { margin: 4px 0 0; color: var(--ink-soft); font-size: 13px; overflow-wrap: anywhere; }
 .hint { margin: 0 0 12px; color: var(--ink-soft); font-size: 13px; }
+.rule { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink); white-space: nowrap; }
+.flags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; font-size: 13px; color: var(--deny); }
+.badge-sev-high { background: var(--deny-tint); color: var(--deny); }
+.badge-sev-medium { background: var(--wait-tint); color: var(--wait); }
+.badge-sev-low { background: var(--surface-2); color: var(--ink-soft); }
+.table-scroll { overflow-x: auto; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0 0 16px; }
+.kpi { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.kpi-value { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--allow); }
+.kpi-bad .kpi-value { color: var(--deny); }
+.kpi-label { font-size: 12px; color: var(--ink-soft); }
 .empty { color: var(--ink-soft); font-size: 14px; margin: 0; }
 .actions { display: grid; gap: 6px; }
 .inline-action { display: flex; gap: 6px; margin-top: 8px; }

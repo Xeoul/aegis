@@ -1,0 +1,29 @@
+# docker compose up          -> Aegis on http://localhost:8000 (dashboard + API docs at /docs)
+# docker compose up -d localstack && python scripts/localstack_bootstrap.py  -> AWS broker demo
+services:
+  aegis:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      AEGIS_AUTH_MODE: dev
+      AEGIS_AUDIT_KEY: ${AEGIS_AUDIT_KEY:-change-me-in-production}
+      AEGIS_SIEM_LOG_FILE: stdout
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AEGIS_CREDENTIAL_BROKER: ${AEGIS_CREDENTIAL_BROKER:-none}
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - aegis-data:/data
+
+  localstack:
+    image: localstack/localstack:4
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=iam,sts,s3,dynamodb,secretsmanager
+
+volumes:
+  aegis-data:

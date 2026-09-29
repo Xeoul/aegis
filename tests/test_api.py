@@ -50,3 +50,14 @@ def test_request_access_deny(client, auth):
     assert body["status"] == "DENIED"
     denied = client.get("/audit-logs", params={"event": "ACCESS_DENIED"}, headers=auth(GRACE)).json()
     assert len(denied) == 1 and denied[0]["actor_id"] == denied[0]["user_id"]
+
+
+def test_dashboard_is_served_with_strict_csp(client):
+    assert client.get("/", follow_redirects=False).headers["location"] == "/ui/"
+    page = client.get("/ui/")
+    assert page.status_code == 200 and "Aegis-JIT" in page.text
+    csp = page.headers["content-security-policy"]
+    assert "script-src 'self'" in csp and "unsafe-inline" not in csp
+    assert page.headers["x-frame-options"] == "DENY"
+    assert client.get("/ui/app.js").status_code == 200
+    assert "content-security-policy" not in client.get("/health").headers  # API docs keep working

@@ -8,6 +8,7 @@ issuer and any external OIDC provider.
 import uuid
 from datetime import timedelta
 from functools import lru_cache
+from typing import Any
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -49,8 +50,8 @@ def _jwks_client() -> jwt.PyJWKClient:
     return jwt.PyJWKClient(settings.oidc_jwks_url, cache_keys=True)
 
 
-def _decode(token: str) -> dict:
-    options = {"require": ["exp", "iat", "iss", "aud"]}
+def _decode(token: str) -> dict[str, Any]:
+    options: Any = {"require": ["exp", "iat", "iss", "aud"]}
     if settings.auth_mode == "oidc":
         key = _jwks_client().get_signing_key_from_jwt(token).key
         return jwt.decode(

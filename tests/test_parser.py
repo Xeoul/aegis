@@ -26,3 +26,17 @@ def test_heuristic_reason():
     assert policy.allow_reason == "Debug a failing migration"
     policy = heuristic_parse("sudo on kms-master-keys because of the quarterly key rotation", CATALOG)
     assert policy.allow_reason == "Quarterly key rotation"
+
+
+@pytest.mark.parametrize("payload", ["9" * 20_000, "9." * 10_000, "1 " * 10_000 + "x"])
+def test_duration_parsing_is_linear_time(payload):
+    """Regression for CodeQL py/polynomial-redos on user-controlled request text."""
+    import time
+
+    from app.llm_parser import _clean_reason, _extract_duration
+
+    start = time.perf_counter()
+    _extract_duration(payload)
+    _clean_reason(payload)
+    heuristic_parse(payload, CATALOG)
+    assert time.perf_counter() - start < 0.5

@@ -3,7 +3,43 @@ on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format
+        run: ruff format --check .
+      - name: Mypy
+        run: mypy
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Bandit (SAST)
+        run: bandit -c pyproject.toml -r app seed_data.py scripts
+      - name: pip-audit (dependency CVEs)
+        run: pip-audit -r requirements.txt
+      - name: Cedar policies validate against schema
+        run: python -c "from app.evaluator import load_policies; load_policies(); print('policies valid')"
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -11,5 +47,44 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: pytest -q
+      - name: Pytest with coverage
+        run: pytest -q --cov --cov-report=term --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  demo:
+    # The live demo runs in the browser with Cedar's WebAssembly build instead of cedarpy.
+    # Build the site and drive it under Node + Pyodide to prove the decisions still match.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the demo site
+        run: demo/build.sh _site
+      - name: Smoke-test it under Pyodide + cedar-wasm
+        run: |
+          npm install --no-save --prefix demo pyodide@0.27.7
+          node demo/smoke.mjs _site
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t aegis-jit:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name aegis -p 8000:8000 -e AEGIS_AUDIT_KEY=ci-key aegis-jit:ci
+          for i in $(seq 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf localhost:8000/health
+          curl -s -o /dev/null -w "%{http_code}" localhost:8000/me | grep -q 401
+          docker logs aegis

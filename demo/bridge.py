@@ -11,6 +11,10 @@ network in between. Three things are swapped for the browser:
   threads, so they run inline on the event loop instead.
 * **The scheduler.** APScheduler needs threads and isn't loaded; the page calls :func:`sweep`
   on a timer instead, which runs the scheduler's own job (``scheduler.run_sweep``).
+* **The policy engine.** ``cedarpy`` is a native extension that can't load in the browser, so
+  the page loads Cedar's official WebAssembly build (``@cedar-policy/cedar-wasm``, the same
+  Cedar engine) and a small stand-in module forwards the evaluator's calls to it. The
+  policies, schema and decisions are the real ones.
 
 It also adds a demo clock (:func:`advance`) so expiry can be shown without waiting hours.
 """
@@ -67,7 +71,76 @@ if "apscheduler" not in sys.modules:
     sys.modules["apscheduler.schedulers"] = types.ModuleType("apscheduler.schedulers")
     sys.modules["apscheduler.schedulers.background"] = _background
 
-import anyio.to_thread  # noqa: E402
+# The policy engine. On a server, app.evaluator uses cedarpy (Cedar's Rust core as a CPython
+# extension). In the browser the page loads Cedar's own WebAssembly build and exposes it as
+# ``globalThis.aegisCedar(function_name, json_argument) -> json_result``. This stand-in gives
+# app.evaluator the four cedarpy functions it uses, backed by that same engine.
+try:
+    import cedarpy  # noqa: F401  (a real install wins, e.g. under CPython in the tests)
+except ImportError:
+    from types import SimpleNamespace
+
+    def _cedar(function: str, argument):
+        import js  # Pyodide's bridge to the page's JavaScript
+
+        return json.loads(js.aegisCedar(function, json.dumps(argument)))
+
+    def _messages(errors) -> list[str]:
+        return [e.get("message", "") if "message" in e else e["error"]["message"] for e in errors]
+
+    class _Handle:
+        @staticmethod
+        def from_str(text: str) -> str:
+            return text  # cedar-wasm takes policy and schema text directly
+
+    def validate_policies(policies: str, schema: str) -> SimpleNamespace:
+        answer = _cedar("validate", {"schema": schema, "policies": {"staticPolicies": policies}})
+        failed = answer["errors"] if answer["type"] != "success" else answer["validationErrors"]
+        errors = _messages(failed)
+        return SimpleNamespace(validation_passed=not errors, errors=errors)
+
+    def policies_to_json_str(policies: str) -> str:
+        # Cedar numbers policies policy0, policy1, ... in source order, both here and when it
+        # authorizes, so the ids line up with the reasons isAuthorized returns.
+        parts = _cedar("policySetTextToParts", policies)
+        if parts["type"] != "success":
+            raise ValueError(_messages(parts["errors"]))
+        static = {}
+        for i, text in enumerate(parts["policies"]):
+            converted = _cedar("policyToJson", text)
+            if converted["type"] != "success":
+                raise ValueError(_messages(converted["errors"]))
+            static[f"policy{i}"] = converted["json"]
+        return json.dumps({"staticPolicies": static, "templates": {}, "templateLinks": []})
+
+    def is_authorized(request: dict, policies: str, entities: list, schema=None, verbose: bool = False):
+        call = {**request, "policies": {"staticPolicies": policies}, "entities": entities}
+        if schema is not None:
+            call["schema"] = schema
+        answer = _cedar("isAuthorized", call)
+        if answer["type"] != "success":
+            return SimpleNamespace(
+                allowed=False,
+                decision="Deny",
+                diagnostics=SimpleNamespace(reasons=[], errors=_messages(answer["errors"])),
+            )
+        response = answer["response"]
+        return SimpleNamespace(
+            allowed=response["decision"] == "allow",
+            decision=response["decision"].capitalize(),
+            diagnostics=SimpleNamespace(
+                reasons=response["diagnostics"]["reason"], errors=_messages(response["diagnostics"]["errors"])
+            ),
+        )
+
+    _cedarpy = types.ModuleType("cedarpy")
+    _cedarpy.PolicySet = _cedarpy.Schema = _Handle
+    _cedarpy.validate_policies = validate_policies
+    _cedarpy.policies_to_json_str = policies_to_json_str
+    _cedarpy.is_authorized = is_authorized
+    sys.modules["cedarpy"] = _cedarpy
+
+import anyio.to_thread
 
 
 async def _run_inline(func, *args, **_kwargs):
@@ -209,9 +282,7 @@ def tamper() -> int | None:
         if not ids:
             return None
         target = ids[len(ids) // 2]
-        conn.execute(
-            text("UPDATE audit_logs SET detail = detail || ' (edited)' WHERE id = :id"), {"id": target}
-        )
+        conn.execute(text("UPDATE audit_logs SET detail = detail || ' (edited)' WHERE id = :id"), {"id": target})
     return target
 
 

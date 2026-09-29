@@ -65,32 +65,27 @@ def approve(
         ParsedPolicy(
             resource=req.resource, action=req.action, allow_reason=req.allow_reason, duration_hours=req.duration_hours
         ),
+        approved=True,
     )
     now = utcnow()
     req.decided_by_id, req.decided_at, req.decision_comment = user.id, now, payload.comment
     if not recheck.allowed:
         req.status = RequestStatus.DENIED
         req.decision_reason = " ".join(recheck.reasons)
-        audit.record(
+        audit.record_request(
             db,
             AuditEvent.ACCESS_DENIED,
-            request_id=req.id,
-            user_id=req.user_id,
+            req,
             actor_id=user.id,
-            resource=req.resource,
-            action=req.action,
             detail="Policy re-check at approval time failed: " + req.decision_reason,
         )
     else:
         req.duration_hours = recheck.granted_duration_hours
-        audit.record(
+        audit.record_request(
             db,
             AuditEvent.REQUEST_APPROVED,
-            request_id=req.id,
-            user_id=req.user_id,
+            req,
             actor_id=user.id,
-            resource=req.resource,
-            action=req.action,
             detail=payload.comment,
         )
         workflow.activate(db, req, user.id, f"Approved by user {user.id}.")
@@ -105,14 +100,11 @@ def reject(
     req, _ = _pending(db, request_id, user)
     req.status = RequestStatus.REJECTED
     req.decided_by_id, req.decided_at, req.decision_comment = user.id, utcnow(), payload.comment
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.REQUEST_REJECTED,
-        request_id=req.id,
-        user_id=req.user_id,
+        req,
         actor_id=user.id,
-        resource=req.resource,
-        action=req.action,
         detail=payload.comment,
     )
     audit.commit(db)
@@ -129,14 +121,11 @@ def review_break_glass(
     if not req.break_glass or req.reviewed_at is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Not an unreviewed break-glass grant")
     req.reviewed_by_id, req.reviewed_at = user.id, utcnow()
-    audit.record(
+    audit.record_request(
         db,
         AuditEvent.BREAK_GLASS_REVIEWED,
-        request_id=req.id,
-        user_id=req.user_id,
+        req,
         actor_id=user.id,
-        resource=req.resource,
-        action=req.action,
         detail=payload.comment,
     )
     audit.commit(db)
