@@ -52,6 +52,7 @@ curl -s localhost:8000/audit-logs/verify -H "Authorization: Bearer $GRACE"
 | `POST` | `/requests/{id}/approve`, `/reject` | eligible approver | Decide a pending request (`{comment}`) |
 | `POST` | `/requests/{id}/review` | eligible approver | Post-incident review of a break-glass grant |
 | `POST` | `/grants/{id}/revoke` | grantee, eligible approver, security | End a grant early (`{reason}`) |
+| `POST` | `/grants/{id}/credentials` | grantee only | Exchange an active grant for scoped, temporary AWS credentials |
 | `GET` | `/active-grants` | authenticated | Your unexpired grants (oversight roles see all, `?user_id=`) |
 | `GET` | `/audit-logs` | auditor, security engineer, admin | Hash-chained history, newest first (`?user_id=`, `?event=`, `?limit=`) |
 | `GET` | `/audit-logs/verify` | auditor, security engineer, admin | Recompute the chain and report the first tampered entry |
@@ -95,6 +96,38 @@ submit ─► evaluate ─┤ ALLOW, low risk ───────────�
   pending requests. Changing their department, role, manager or admin flag does the same.
   Admins cannot edit their own account.
 
+## Real temporary AWS credentials (zero standing privilege)
+
+Resources can be backed by AWS (`aws_service`, `aws_resource_arn`, `aws_role_arn`). With
+`AEGIS_CREDENTIAL_BROKER=aws`, `POST /grants/{id}/credentials` calls `sts:AssumeRole` for the
+grantee:
+
+- **Least privilege.** A session policy allows only the IAM actions for the granted action
+  (e.g. `read` on S3 gives `s3:GetObject`, `s3:ListBucket` and `s3:GetBucketLocation`) on that
+  one ARN. AWS takes the intersection of the role's policy and the session policy, so the
+  credentials are never broader than the grant.
+- **Bounded lifetime.** The session duration is at most the grant's remaining time. If the
+  grant ends within the 15-minute STS minimum, no credentials are issued.
+- **Attribution.** `SourceIdentity` is the user's email, the session name is
+  `aegis-<request>-<user>`, and the request id is a session tag. CloudTrail therefore shows the
+  human and the approval behind every API call. The access key id (never the secret) is written
+  to the Aegis audit trail.
+- **Early revocation.** STS credentials cannot be recalled, so revoking a grant early (manually,
+  or through a leaver/mover change) adds a `Deny` statement to the role's
+  `AegisRevokedSessions` policy. It matches that grant's sessions through `aws:userid`, and the
+  scheduler removes it once those sessions have expired. If AWS rejects the change, a
+  `CLOUD_REVOCATION_FAILED` audit event says manual action is needed.
+
+Try it against LocalStack:
+
+```bash
+docker compose up -d localstack
+export AWS_ENDPOINT_URL=http://localhost:4566 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
+python scripts/localstack_bootstrap.py          # bucket, table, secret, and the IAM roles Aegis assumes
+python seed_data.py --reset
+AEGIS_CREDENTIAL_BROKER=aws uvicorn app.main:app
+```
+
 ## Tamper-evident audit trail
 
 Every audit entry stores `prev_hash` and `hash = HMAC-SHA256(AEGIS_AUDIT_KEY, prev_hash ||
@@ -111,6 +144,7 @@ app/
   auth.py        JWT verification (dev issuer or OIDC/JWKS), role checks
   audit.py       HMAC hash-chained audit writer and verifier
   workflow.py    Approver eligibility, activation, break-glass, revocation, leaver/mover handling
+  credentials.py AWS STS broker: scoped AssumeRole, session revocation, pruning
   routers/       HTTP endpoints: auth, users, access, approvals, audit
   database.py    SQLite engine, session factory, get_db dependency
   models.py      User, Resource, AccessRequest, AuditLog
@@ -120,6 +154,7 @@ app/
   scheduler.py   APScheduler sweep: expired grants -> REVOKED, stale approvals -> EXPIRED
   main.py        FastAPI app, lifespan (starts and stops the scheduler), router wiring
 policies/        Cedar schema, policies and role attributes
+scripts/         LocalStack bootstrap for the AWS demo
 seed_data.py     Mock users and resources (idempotent; --reset to wipe)
 tests/           pytest suite (runs offline)
 ```
@@ -202,6 +237,9 @@ fields and checks that policy still holds.
 | `AEGIS_JWT_SECRET` | random per process (dev mode signing key) |
 | `AEGIS_TOKEN_TTL_MINUTES` | `60` |
 | `AEGIS_OIDC_ISSUER`, `AEGIS_OIDC_AUDIENCE`, `AEGIS_OIDC_JWKS_URL` | required in `oidc` mode (audience defaults to `aegis-jit`) |
+| `AEGIS_CREDENTIAL_BROKER` | `none` (`aws` to issue STS credentials) |
+| `AEGIS_AWS_MAX_SESSION_SECONDS` | `3600` (must not exceed the roles' `MaxSessionDuration`) |
+| `AEGIS_AWS_ACCOUNT_ID` | `000000000000` (LocalStack), used by `seed_data.py` to build ARNs |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
 
 ## Tests

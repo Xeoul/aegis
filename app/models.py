@@ -40,6 +40,9 @@ class AuditEvent(str, enum.Enum):
     REQUEST_EXPIRED = "REQUEST_EXPIRED"
     BREAK_GLASS_USED = "BREAK_GLASS_USED"
     BREAK_GLASS_REVIEWED = "BREAK_GLASS_REVIEWED"
+    CREDENTIALS_ISSUED = "CREDENTIALS_ISSUED"
+    CLOUD_SESSIONS_REVOKED = "CLOUD_SESSIONS_REVOKED"
+    CLOUD_REVOCATION_FAILED = "CLOUD_REVOCATION_FAILED"
     USER_CREATED = "USER_CREATED"
     USER_UPDATED = "USER_UPDATED"
     USER_DEACTIVATED = "USER_DEACTIVATED"
@@ -77,6 +80,11 @@ class Resource(Base):
     # granted to members of this department (or to cross-department roles, see evaluator).
     owner_department: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
+    # Optional AWS backing: grants on this resource can be exchanged for STS credentials.
+    aws_service: Mapped[str | None] = mapped_column(String(40), nullable=True)  # s3, dynamodb, ...
+    aws_resource_arn: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    aws_role_arn: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
 
 class AccessRequest(Base):
     __tablename__ = "access_requests"
@@ -109,6 +117,9 @@ class AccessRequest(Base):
     break_glass: Mapped[bool] = mapped_column(Boolean, default=False)
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Set once AWS credentials have been issued, so early revocation knows to deny sessions.
+    credentials_issued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

@@ -5,10 +5,14 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+import logging
+
+from app import audit, credentials
 from app.database import utcnow
 from app.evaluator import BREAK_GLASS_MAX_HOURS, normalize
 from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
+
+logger = logging.getLogger(__name__)
 
 APPROVAL_WINDOW_HOURS = 24
 
@@ -88,7 +92,9 @@ def break_glass(db: Session, request: AccessRequest, reason: str) -> None:
     activate(db, request, request.user_id, "Break-glass.")
 
 
-def revoke(db: Session, grant: AccessRequest, actor_id: int | None, reason: str) -> None:
+def revoke(db: Session, grant: AccessRequest, actor_id: int | None, reason: str, *, early: bool = True) -> None:
+    """End a grant. ``early`` means before its natural expiry, so any cloud sessions issued for it
+    must be actively invalidated. On natural expiry the STS credentials expire by themselves."""
     now = utcnow()
     grant.status = RequestStatus.REVOKED
     grant.revoked_at = now
@@ -103,6 +109,32 @@ def revoke(db: Session, grant: AccessRequest, actor_id: int | None, reason: str)
         resource=grant.resource,
         action=grant.action,
         detail=reason,
+    )
+    if early and grant.credentials_issued_at is not None:
+        _revoke_cloud_sessions(db, grant, actor_id)
+
+
+def _revoke_cloud_sessions(db: Session, grant: AccessRequest, actor_id: int | None) -> None:
+    resource = db.scalar(select(Resource).where(Resource.name == grant.resource))
+    if resource is None or not resource.aws_role_arn:
+        return
+    common = dict(request_id=grant.id, user_id=grant.user_id, actor_id=actor_id, resource=grant.resource, action=grant.action)
+    try:
+        credentials.revoke_sessions(grant, resource)
+    except Exception as exc:  # noqa: BLE001 - any AWS failure must be surfaced, not swallowed
+        logger.exception("Failed to revoke AWS sessions for grant %s", grant.id)
+        audit.record(
+            db,
+            AuditEvent.CLOUD_REVOCATION_FAILED,
+            detail=f"Could not deny sessions on {resource.aws_role_arn}: {exc}. Manual action required.",
+            **common,
+        )
+        return
+    audit.record(
+        db,
+        AuditEvent.CLOUD_SESSIONS_REVOKED,
+        detail=f"Denied sessions '{credentials.session_name(grant)}' on {resource.aws_role_arn}.",
+        **common,
     )
 
 

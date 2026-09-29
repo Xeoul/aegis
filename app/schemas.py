@@ -65,6 +65,9 @@ class ResourceOut(BaseModel):
     name: str
     sensitivity_level: SensitivityLevel
     owner_department: str | None
+    aws_service: str | None
+    aws_resource_arn: str | None
+    aws_role_arn: str | None
 
 
 # --- Natural-language request & parsed policy -------------------------------
@@ -166,9 +169,22 @@ class RequestOut(GrantOut):
     decision_comment: str | None
     reviewed_by_id: int | None
     reviewed_at: datetime | None
+    credentials_issued_at: datetime | None
     revoked_at: datetime | None
     revoked_by_id: int | None
     revoke_reason: str | None
+
+
+class CredentialsOut(BaseModel):
+    """Temporary AWS credentials for one grant. Returned once per call and never stored by Aegis."""
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    expiration: datetime
+    role_arn: str
+    session_name: str
+    session_policy: dict
 
 
 class CommentIn(BaseModel):

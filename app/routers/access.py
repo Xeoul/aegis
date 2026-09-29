@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, workflow
+from app import audit, credentials, workflow
 from app.auth import get_current_user, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
@@ -12,6 +12,7 @@ from app.schemas import (
     ABACPolicy,
     AccessDecisionOut,
     AccessRequestIn,
+    CredentialsOut,
     GrantOut,
     PolicyConditions,
     PolicyResource,
@@ -167,3 +168,41 @@ def revoke_grant(
     workflow.revoke(db, grant, user.id, f"Revoked early: {payload.reason}")
     audit.commit(db)
     return grant
+
+
+@router.post("/grants/{grant_id}/credentials", response_model=CredentialsOut)
+def issue_credentials(
+    grant_id: int, response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> CredentialsOut:
+    """Exchange your ACTIVE grant for temporary AWS credentials scoped to exactly that grant."""
+    if not credentials.enabled():
+        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "Credential broker is disabled (AEGIS_CREDENTIAL_BROKER)")
+    grant, resource = load_request(db, grant_id)
+    if grant.user_id != user.id:
+        # Only the grantee may hold the credentials; not even approvers or admins.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Request {grant_id} not found")
+    if grant.status != RequestStatus.ACTIVE or grant.expires_at is None or grant.expires_at <= utcnow():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Grant is not active")
+    if resource is None or not resource.aws_role_arn:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{grant.resource} is not backed by an AWS role")
+    try:
+        issued = credentials.issue(grant, resource, user)
+    except credentials.BrokerError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    grant.credentials_issued_at = utcnow()
+    audit.record(
+        db,
+        AuditEvent.CREDENTIALS_ISSUED,
+        request_id=grant.id,
+        user_id=user.id,
+        actor_id=user.id,
+        resource=grant.resource,
+        action=grant.action,
+        # The access key id is safe to log and lets CloudTrail be joined back to this grant.
+        detail=f"STS session {issued.session_name} ({issued.access_key_id}) on {issued.role_arn} "
+        f"until {issued.expiration.isoformat()}; actions {issued.session_policy['Statement'][0]['Action']}.",
+    )
+    audit.commit(db)
+    response.headers["Cache-Control"] = "no-store"
+    return CredentialsOut(**issued.__dict__)

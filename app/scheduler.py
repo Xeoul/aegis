@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
-from app import audit, workflow
+from app import audit, credentials, workflow
 from app.database import SessionLocal, utcnow
-from app.models import AccessRequest, AuditEvent, RequestStatus
+from app.models import AccessRequest, AuditEvent, RequestStatus, Resource
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,11 @@ def revoke_expired_grants() -> int:
         for grant in expired:
             assert grant.expires_at is not None  # guaranteed by the query
             workflow.revoke(
-                db, grant, None, f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked."
+                db,
+                grant,
+                None,
+                f"Grant expired at {grant.expires_at.isoformat()}Z and was automatically revoked.",
+                early=False,
             )
         audit.commit(db)
     if expired:
@@ -59,9 +63,25 @@ def expire_stale_requests() -> int:
     return len(stale)
 
 
+def prune_cloud_revocations() -> int:
+    """Remove AWS deny statements whose sessions have all expired."""
+    if not credentials.enabled():
+        return 0
+    with SessionLocal() as db:
+        roles = set(db.scalars(select(Resource.aws_role_arn).where(Resource.aws_role_arn.is_not(None))))
+    removed = 0
+    for role_arn in roles:
+        try:
+            removed += credentials.prune_revocations(role_arn)
+        except Exception:  # noqa: BLE001 - keep sweeping other roles
+            logger.exception("Could not prune revocations on %s", role_arn)
+    return removed
+
+
 def run_sweep() -> None:
     revoke_expired_grants()
     expire_stale_requests()
+    prune_cloud_revocations()
 
 
 def create_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
