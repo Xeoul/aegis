@@ -1,0 +1,218 @@
+"""Runs the Aegis API inside a web page, for the live demo.
+
+The page loads Python in the browser (Pyodide), writes the real ``app/`` package next to
+this file, and calls :func:`call` for every API request. Requests go through the same
+FastAPI app, dependencies, policy engine and audit chain as the server; there's just no
+network in between. Three things are swapped for the browser:
+
+* **Request parsing** uses Aegis's own offline keyword parser (``AEGIS_LLM_MODE=heuristic``).
+  A public page can't hold an Anthropic API key, so the Claude client is never created.
+* **Threads.** FastAPI runs ``def`` endpoints in a thread pool, and the browser has no
+  threads, so they run inline on the event loop instead.
+* **The scheduler.** APScheduler needs threads and isn't loaded; the page calls :func:`sweep`
+  on a timer instead, which runs the scheduler's own job (``scheduler.run_sweep``).
+
+It also adds a demo clock (:func:`advance`) so expiry can be shown without waiting hours.
+"""
+
+import contextlib
+import datetime as _dt
+import io
+import json
+import os
+import secrets
+import sys
+import types
+
+# Settings are read once, on import, so these come first.
+# (The database path can be overridden, for the tests.)
+os.environ.setdefault("AEGIS_DATABASE_URL", "sqlite:////tmp/aegis-demo.db")
+os.environ.update(
+    AEGIS_LLM_MODE="heuristic",
+    AEGIS_SCHEDULER_ENABLED="false",
+    AEGIS_AUTH_MODE="dev",
+    AEGIS_LOG_LEVEL="WARNING",
+    # A fresh key per page load: the demo's audit chain is real, just short-lived.
+    AEGIS_AUDIT_KEY=secrets.token_hex(32),
+)
+
+# llm_parser imports the Anthropic SDK at the top of the module. It's never called in
+# heuristic mode, so a stand-in with the two names the module refers to is enough.
+if "anthropic" not in sys.modules:
+    _anthropic = types.ModuleType("anthropic")
+
+    class APIError(Exception):
+        pass
+
+    class Anthropic:
+        def __init__(self, *args, **kwargs):
+            raise APIError("Claude isn't available in the browser demo")
+
+    _anthropic.APIError = APIError
+    _anthropic.Anthropic = Anthropic
+    sys.modules["anthropic"] = _anthropic
+
+# app.scheduler builds an APScheduler BackgroundScheduler, which needs threads and
+# multiprocessing. The page runs the same sweep on a timer instead (see sweep), so the
+# scheduler is never created; this stand-in only has to satisfy the import.
+if "apscheduler" not in sys.modules:
+    _background = types.ModuleType("apscheduler.schedulers.background")
+
+    class BackgroundScheduler:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("The browser demo runs the sweep itself; there is no background scheduler")
+
+    _background.BackgroundScheduler = BackgroundScheduler
+    sys.modules["apscheduler"] = types.ModuleType("apscheduler")
+    sys.modules["apscheduler.schedulers"] = types.ModuleType("apscheduler.schedulers")
+    sys.modules["apscheduler.schedulers.background"] = _background
+
+import anyio.to_thread  # noqa: E402
+
+
+async def _run_inline(func, *args, **_kwargs):
+    return func(*args)
+
+
+anyio.to_thread.run_sync = _run_inline
+
+
+class DemoDatetime(_dt.datetime):
+    """``datetime`` with an adjustable offset, for the demo clock.
+
+    Aegis reads the time through ``app.database.utcnow`` and PyJWT checks token times with
+    its own ``datetime.now``; both are pointed at this class so they stay in agreement.
+    Arithmetic keeps the subclass, so tokens and timestamps built from it do too.
+    """
+
+    offset = _dt.timedelta()
+
+    @classmethod
+    def now(cls, tz=None):
+        t = _dt.datetime.now(tz) + cls.offset
+        return cls(t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond, t.tzinfo)
+
+
+import jwt.api_jwt  # noqa: E402
+
+from app import database  # noqa: E402
+
+database.datetime = DemoDatetime
+jwt.api_jwt.datetime = DemoDatetime
+
+from sqlalchemy import select, text  # noqa: E402
+
+import seed_data  # noqa: E402
+from app import scheduler  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import User  # noqa: E402
+
+
+def reset() -> None:
+    """Start over: empty tables, the seeded users and resources, and the real clock."""
+    DemoDatetime.offset = _dt.timedelta()
+    with contextlib.redirect_stdout(io.StringIO()):  # seed() prints the tables it created
+        seed_data.seed(reset=True)
+
+
+def users() -> str:
+    """The seeded people, for the page's sign-in picker (the API's own list needs a token)."""
+    with database.SessionLocal() as db:
+        rows = db.scalars(select(User).order_by(User.id)).all()
+        by_id = {u.id: u for u in rows}
+        return json.dumps(
+            [
+                dict(
+                    id=u.id,
+                    name=u.name,
+                    email=u.email,
+                    department=u.department,
+                    role=u.role,
+                    is_admin=u.is_admin,
+                    manager=by_id[u.manager_id].name if u.manager_id in by_id else None,
+                )
+                for u in rows
+            ]
+        )
+
+
+async def call(method: str, path: str, token: str | None = None, body: str | None = None) -> str:
+    """Send one HTTP request to the FastAPI app and return ``{"status", "body"}`` as JSON."""
+    path_only, _, query = path.partition("?")
+    headers = [(b"host", b"aegis.demo"), (b"content-type", b"application/json")]
+    if token:
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method.upper(),
+        "scheme": "https",
+        "path": path_only,
+        "raw_path": path_only.encode(),
+        "query_string": query.encode(),
+        "root_path": "",
+        "headers": headers,
+        "client": ("127.0.0.1", 0),
+        "server": ("aegis.demo", 443),
+    }
+    request_body = (body or "").encode()
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": request_body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    status = 500
+    chunks: list[bytes] = []
+
+    async def send(message):
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+        elif message["type"] == "http.response.body":
+            chunks.append(message.get("body", b""))
+
+    await app(scope, receive, send)
+    raw = b"".join(chunks).decode()
+    try:
+        payload = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        payload = raw
+    return json.dumps({"status": status, "body": payload})
+
+
+def sweep() -> None:
+    """What the server's scheduler does every minute: revoke expired grants, expire stale requests."""
+    scheduler.run_sweep()
+
+
+def advance(hours: float) -> str:
+    """Move the demo clock forward, then sweep, as the scheduler would once that time had passed."""
+    DemoDatetime.offset += _dt.timedelta(hours=hours)
+    sweep()
+    return now()
+
+
+def now() -> str:
+    return database.utcnow().isoformat(timespec="seconds")
+
+
+def tamper() -> int | None:
+    """Quietly edit one audit entry in the database, the way someone with only database access
+    could, so the page can show the chain check catching it. Returns the edited entry's id."""
+    with database.engine.begin() as conn:
+        ids = conn.execute(text("SELECT id FROM audit_logs ORDER BY id")).scalars().all()
+        if not ids:
+            return None
+        target = ids[len(ids) // 2]
+        conn.execute(
+            text("UPDATE audit_logs SET detail = detail || ' (edited)' WHERE id = :id"), {"id": target}
+        )
+    return target
+
+
+reset()

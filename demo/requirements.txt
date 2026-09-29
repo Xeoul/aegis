@@ -1,0 +1,9 @@
+# Pure-Python packages the in-browser demo installs on top of the ones Pyodide 0.27.7
+# bundles (pydantic 2.10, SQLAlchemy 2.0, anyio 4.9, idna), pinned to versions that
+# work with those. build.sh downloads the wheels into the published site. APScheduler
+# isn't needed: the page runs the scheduler's sweep itself (see bridge.py).
+fastapi==0.115.14
+starlette==0.46.2
+email-validator==2.2.0
+dnspython==2.7.0
+PyJWT==2.10.1
