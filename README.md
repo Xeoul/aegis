@@ -150,3 +150,7 @@ bandit -c pyproject.toml -r app && pip-audit -r requirements.txt
 
 The schema changes between versions with no migrations, so rerun `python seed_data.py --reset`
 after pulling.
+
+## License
+
+[MIT](LICENSE) © 2026 Vincent Lam

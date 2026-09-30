@@ -3,6 +3,8 @@ name = "aegis-jit"
 version = "0.7.0"
 description = "Just-In-Time IAM policy engine: natural-language access requests, Cedar ABAC, approvals, and scoped AWS STS credentials."
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
