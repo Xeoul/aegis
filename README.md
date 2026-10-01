@@ -1,7 +1,7 @@
 # Aegis-JIT
 
-[![CI](https://github.com/Xeoul/aegis-jit/actions/workflows/ci.yml/badge.svg)](https://github.com/Xeoul/aegis-jit/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/Xeoul/aegis-jit/actions/workflows/codeql.yml/badge.svg)](https://github.com/Xeoul/aegis-jit/actions/workflows/codeql.yml)
+[![CI](https://github.com/Xeoul/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/Xeoul/aegis/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Xeoul/aegis/actions/workflows/codeql.yml/badge.svg)](https://github.com/Xeoul/aegis/actions/workflows/codeql.yml)
 
 **A Just-In-Time access platform with zero standing privilege.** Employees hold no standing
 access. When they need something, they ask in plain English. An LLM parses the request, a

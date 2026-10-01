@@ -2,6 +2,14 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: /
+    # demo/requirements.txt pins the pure-Python wheels the in-browser demo
+    # loads on top of Pyodide 0.27.7's own packages (pydantic 2.10 and
+    # friends). Newer FastAPI/Starlette releases don't run there, and CI's
+    # demo job is what proves a change does, so those pins move by hand
+    # together with the Pyodide version rather than one Dependabot bump at
+    # a time.
+    exclude-paths:
+      - "demo/**"
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
