@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, workflow
+from app import audit, identity
 from app.auth import get_current_user, require_admin
 from app.database import get_db
 from app.models import AuditEvent, Resource, User
@@ -11,18 +11,10 @@ from app.schemas import ResourceOut, UserCreate, UserOut, UserUpdate
 
 router = APIRouter()
 
-# Changing any of these can change what a user is entitled to, so open access is revoked
-# and must be re-requested under the new attributes (mover handling).
-ACCESS_RELEVANT = {"department", "role", "manager_id", "is_admin"}
-
 
 def _check_manager(db: Session, manager_id: int | None, user_id: int | None = None) -> None:
-    if manager_id is None:
-        return
-    if manager_id == user_id:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A user cannot be their own manager")
-    if db.get(User, manager_id) is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Manager {manager_id} does not exist")
+    if error := identity.manager_error(db, manager_id, user_id):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED, tags=["users"])
@@ -56,23 +48,11 @@ def update_user(
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
 
-    changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if getattr(user, k) != v}
+    changes = payload.model_dump(exclude_unset=True)
     if "manager_id" in changes:
         _check_manager(db, changes["manager_id"], user.id)
-    if not changes:
-        return user
-    summary = ", ".join(f"{k}: {getattr(user, k)!r} -> {v!r}" for k, v in changes.items())
-    for key, value in changes.items():
-        setattr(user, key, value)
-
-    if changes.get("is_active") is False:
-        audit.record(db, AuditEvent.USER_DEACTIVATED, user_id=user.id, actor_id=admin.id, detail=summary)
-        workflow.revoke_all_for_user(db, user, admin.id, "Leaver: account deactivated.")
-    else:
-        audit.record(db, AuditEvent.USER_UPDATED, user_id=user.id, actor_id=admin.id, detail=summary)
-        if ACCESS_RELEVANT & changes.keys():
-            workflow.revoke_all_for_user(db, user, admin.id, f"Mover: access attributes changed ({summary}).")
-    audit.commit(db)
+    if identity.apply_changes(db, user, changes, admin.id):
+        audit.commit(db)
     return user
 
 

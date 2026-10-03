@@ -54,3 +54,15 @@ assert.ok(alerts.includes("prompt-injection") && alerts.includes("privilege-esca
 const review = (await call("GET", "/reports/access-review", grace)).body.control_checks;
 assert.deepEqual(review, { self_approvals: 0, active_grants_for_inactive_users: 0, unreviewed_break_glass: 0, audit_chain_valid: true });
 console.log(`demo smoke ok: cedar ${cedar.getCedarVersion()}, ${alerts.length} alerts, chain intact`);
+
+// SCIM: the identity provider deprovisions Alice, and her grant is revoked at once.
+const scim = async (method, p, body) => JSON.parse(await bridge.scim(method, p, body === undefined ? null : JSON.stringify(body)));
+const found = (await scim("GET", '/scim/v2/Users?filter=userName eq "alice.chen@aegis.example"')).body;
+assert.equal(found.totalResults, 1);
+const off = await scim("PATCH", `/scim/v2/Users/${found.Resources[0].id}`, { Operations: [{ op: "replace", value: { active: false } }] });
+assert.equal(off.body.active, false);
+const leavers = (await call("GET", "/reports/access-review", grace)).body.control_checks.active_grants_for_inactive_users;
+assert.equal(leavers, 0, "deprovisioning over SCIM revokes the leaver's grants");
+const hired = await scim("POST", "/scim/v2/Users", { userName: "jordan.reyes@aegis.example", title: "engineer" });
+assert.equal(hired.status, 201);
+console.log("scim smoke ok: leaver revoked, joiner provisioned");

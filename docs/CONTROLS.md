@@ -7,9 +7,10 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 
 | Control | Requirement (summary) | How Aegis-JIT implements it | Evidence |
 |---|---|---|---|
-| **AC-2** Account Management | Manage accounts, including authorization and review | Admin-only provisioning with audit; per-user access review | `routers/users.py`, `/reports/access-review` |
+| **AC-2** Account Management | Manage accounts, including authorization and review | Admin-only provisioning with audit; SCIM 2.0 provisioning from the IdP; per-user access review | `routers/users.py`, `routers/scim.py`, `/reports/access-review` |
+| **AC-2(1)** Automated System Account Management | Support account management with automated mechanisms | The IdP drives joiner/mover/leaver over SCIM, through the same lifecycle code as the admin API | `test_okta_style_deactivation_revokes_access`, `test_mover_via_patch_revokes_open_access` |
 | **AC-2(2)** Automated Temporary Account Management | Automatically remove temporary access | Every grant has `expires_at`; the scheduler revokes it; STS sessions expire with it | `scheduler.py`, `test_request_access_allow_then_revoke` |
-| **AC-2(3)** Disable Accounts | Disable accounts when no longer needed | `PATCH /users/{id}` with `is_active=false` revokes grants, cancels pending requests and denies live AWS sessions | `test_leaver_loses_all_access`, `test_leaver_denies_issued_sessions` |
+| **AC-2(3)** Disable Accounts | Disable accounts when no longer needed | `PATCH /users/{id}` with `is_active=false`, or SCIM `active: false` from the IdP, revokes grants, cancels pending requests and denies live AWS sessions | `test_leaver_loses_all_access`, `test_leaver_denies_issued_sessions`, `test_entra_style_deactivation` |
 | **AC-2(4)** Automated Audit Actions | Audit account creation, modification and disabling | `USER_CREATED`, `USER_UPDATED` and `USER_DEACTIVATED` events in the chained log | `test_admin_actions_are_audited` |
 | **AC-2(6)** Dynamic Privilege Management | Grant privileges dynamically | Just-in-time grants, not standing role membership | Whole design |
 | **AC-3** Access Enforcement | Enforce approved authorizations | The Cedar policy engine decides every request; the API enforces authorization per endpoint | `policies/aegis.cedar`, `tests/test_auth.py` |
@@ -38,7 +39,7 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | Criterion | Coverage |
 |---|---|
 | **CC6.1** Logical access security | Cedar ABAC, token authentication, least-privilege STS sessions |
-| **CC6.2** Provisioning and deprovisioning | Admin provisioning with audit; the leaver process revokes all access |
+| **CC6.2** Provisioning and deprovisioning | SCIM provisioning from the IdP and admin provisioning, both audited; the leaver process revokes all access |
 | **CC6.3** Role changes and least privilege | Mover handling revokes access when attributes change; time-bound grants |
 | **CC7.2** Monitoring for anomalies | Detection rules and alerts |
 | **CC7.3** Evaluating security events | Alert triage (resolved or false positive, with notes) |
@@ -49,7 +50,7 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | Control | Coverage |
 |---|---|
 | **5.15** Access control | Cedar policies |
-| **5.16** Identity management | User lifecycle with audit |
+| **5.16** Identity management | User lifecycle driven by the IdP over SCIM, with audit |
 | **5.18** Access rights | JIT grants, approval, periodic review, removal on change |
 | **8.2** Privileged access rights | Approval required, break-glass with review, time limits |
 | **8.3** Information access restriction | Department boundaries, clearance levels |

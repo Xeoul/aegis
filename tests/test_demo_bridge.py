@@ -80,6 +80,16 @@ SCENARIO = textwrap.dedent(
         status, v = await api("GET", "/audit-logs/verify", g)
         assert not v["valid"] and v["first_invalid_id"] == edited, v
 
+        # The page's identity-provider tab: SCIM with the bridge's provisioning token.
+        r = json.loads(await bridge.scim("GET", '/scim/v2/Users?filter=userName eq "' + alice + '"'))
+        alice_id = r["body"]["Resources"][0]["id"]
+        patch = {"Operations": [{"op": "replace", "value": {"active": False}}]}
+        r = json.loads(await bridge.scim("PATCH", f"/scim/v2/Users/{alice_id}", json.dumps(patch)))
+        assert r["status"] == 200 and r["body"]["active"] is False, r
+        status, grants = await api("GET", "/active-grants", g)
+        assert grants == [], grants
+        assert not next(p for p in json.loads(bridge.users()) if p["email"] == alice)["active"]
+
         bridge.reset()
         status, grants = await api("GET", "/active-grants", await token(grace))
         assert grants == []
@@ -94,7 +104,7 @@ SCENARIO = textwrap.dedent(
 
 def test_demo_bridge_runs_the_app_end_to_end(tmp_path):
     env = {**os.environ, "AEGIS_DATABASE_URL": f"sqlite:///{tmp_path}/demo.db", "PYTHONPATH": str(ROOT)}
-    for key in ("AEGIS_LLM_MODE", "AEGIS_SCHEDULER_ENABLED", "AEGIS_AUDIT_KEY", "AEGIS_AUTH_MODE"):
+    for key in ("AEGIS_LLM_MODE", "AEGIS_SCHEDULER_ENABLED", "AEGIS_AUDIT_KEY", "AEGIS_AUTH_MODE", "AEGIS_SCIM_TOKEN"):
         env.pop(key, None)
     result = subprocess.run(
         [sys.executable, "-c", f"ROOT = {str(ROOT)!r}\n" + SCENARIO],
