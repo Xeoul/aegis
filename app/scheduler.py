@@ -89,6 +89,7 @@ def run_sweep() -> None:
 
 
 DEMO_RESET_JOB_ID = "demo-reset"
+CHECKPOINT_JOB_ID = "audit-checkpoint"
 last_demo_reset: datetime | None = None
 
 
@@ -112,6 +113,17 @@ def create_scheduler(interval_seconds: int = 60, demo_reset_minutes: int | None 
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.now(UTC),  # also sweep once at startup
+    )
+    from app import checkpoints
+    from app.config import settings
+
+    scheduler.add_job(
+        checkpoints.create_now,
+        "interval",
+        minutes=settings.checkpoint_interval_minutes,
+        id=CHECKPOINT_JOB_ID,
+        max_instances=1,
+        coalesce=True,
     )
     if demo_reset_minutes:
         global last_demo_reset

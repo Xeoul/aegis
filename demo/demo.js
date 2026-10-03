@@ -5,9 +5,9 @@
 'use strict';
 
 const PYODIDE_URL = 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/';
-// Bundled with Pyodide. The rest (FastAPI, Starlette, email-validator, PyJWT) are
+// Bundled with Pyodide (cryptography signs the audit checkpoints). The rest (FastAPI, Starlette, email-validator, PyJWT) are
 // pure-Python wheels served from this site - see build.sh.
-const PYODIDE_PACKAGES = ['pydantic', 'sqlalchemy', 'anyio', 'idna', 'typing-extensions'];
+const PYODIDE_PACKAGES = ['pydantic', 'sqlalchemy', 'anyio', 'idna', 'typing-extensions', 'cryptography'];
 const SWEEP_MS = 60 * 1000; // the server's scheduler runs every minute too
 
 // Guided examples: who to sign in as, and what they ask for.
@@ -447,8 +447,10 @@ async function renderAudit() {
         const v = (await api('GET', '/audit-logs/verify')).body;
         verifyResult.className = `verify ${v.valid ? 'verify-ok' : 'verify-bad'}`;
         verifyResult.textContent = v.valid
-            ? `Chain intact: ${v.entries_checked} entries checked. Every hash matches its entry and the one before it.`
-            : `Tampering detected at entry #${v.first_invalid_id}: ${v.reason}. Nobody with only database access can repair the chain without the key.`;
+            ? `Chain intact: ${v.entries_checked} entries checked${v.checkpoints_checked ? `, and ${v.checkpoints_checked} signed checkpoint${v.checkpoints_checked === 1 ? '' : 's'} still match` : ' (no signed checkpoint yet; one is made every minute)'}. Every hash matches its entry and the one before it.`
+            : v.checkpoints_checked
+                ? `Tampering detected: ${v.reason}. The HMAC chain that's left still verifies, but the signed checkpoint, kept outside the database, doesn't.`
+                : `Tampering detected at entry #${v.first_invalid_id}: ${v.reason}. Nobody with only database access can repair the chain without the key.`;
         await renderAuditRows(table);
     };
     const table = h('div', { class: 'audit-rows' });
@@ -459,8 +461,13 @@ async function renderAudit() {
                 const id = bridge.tamper();
                 toast(id ? `Entry #${id} was edited directly in the database. Now verify the chain.` : 'Nothing to tamper with yet.');
                 await renderAuditRows(table);
-            }) }, 'Tamper with an entry')),
-        h('p', { class: 'hint' }, 'Each entry stores an HMAC of its contents and the previous entry’s hash, so editing, deleting or reordering any row breaks the chain from there on.'),
+            }) }, 'Tamper with an entry'),
+            h('button', { type: 'button', class: 'danger', onclick: () => busy(async () => {
+                const ids = bridge.truncate(3).toJs();
+                toast(ids.length ? `Entries #${ids[0]}–#${ids[ids.length - 1]} were deleted from the database. The chain that’s left is still valid. Now verify.` : 'Nothing to delete yet.');
+                await renderAuditRows(table);
+            }) }, 'Delete the newest 3 entries')),
+        h('p', { class: 'hint' }, 'Each entry stores an HMAC of its contents and the previous entry’s hash, so editing, deleting or reordering any row breaks the chain from there on. Deleting the newest entries leaves a shorter chain that still checks out, so Aegis also signs checkpoints (Ed25519, a separate key) to a file outside the database: “the log had N entries ending in this hash”.'),
         verifyResult, table);
     renderAuditRows(table, res);
 }

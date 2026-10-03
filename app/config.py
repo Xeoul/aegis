@@ -34,6 +34,16 @@ class Settings:
     # Key for the HMAC audit chain. Keep it outside the database so someone with only
     # database access cannot recompute the chain after editing history.
     audit_key: str = field(default_factory=lambda: os.getenv("AEGIS_AUDIT_KEY", ""))
+    # Ed25519 seed (base64, 32 bytes) for signed audit checkpoints, and where they're appended.
+    checkpoint_key: str = field(default_factory=lambda: os.getenv("AEGIS_CHECKPOINT_KEY", ""))
+    checkpoint_file: str = field(
+        default_factory=lambda: os.getenv("AEGIS_CHECKPOINT_FILE", "./audit-checkpoints.jsonl")
+    )
+    checkpoint_interval_minutes: int = field(
+        default_factory=lambda: int(os.getenv("AEGIS_CHECKPOINT_INTERVAL_MINUTES", "15"))
+    )
+    # In-process rate limits on the endpoints worth abusing (see app/ratelimit.py).
+    rate_limits: bool = field(default_factory=lambda: _env_bool("AEGIS_RATE_LIMITS", True))
     scheduler_enabled: bool = field(default_factory=lambda: _env_bool("AEGIS_SCHEDULER_ENABLED", True))
     # Public demo: shows a sandbox banner and periodically wipes and re-seeds the database so
     # every visitor starts from the same clean story.

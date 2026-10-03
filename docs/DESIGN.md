@@ -23,6 +23,7 @@ How each part of the system works. For the overview, see the [README](../README.
 | `GET` | `/active-grants` | authenticated | Your unexpired grants (oversight roles see all, `?user_id=`) |
 | `GET` | `/audit-logs` | auditor, security engineer, admin | Hash-chained history, newest first (`?user_id=`, `?event=`, `?limit=`) |
 | `GET` | `/audit-logs/verify` | auditor, security engineer, admin | Recompute the chain and report the first tampered entry |
+| `GET` `POST` | `/audit-logs/checkpoints` | auditor, security engineer, admin | Signed checkpoints and the public key to check them; `POST` signs one now |
 | `GET` | `/audit-logs/export` | auditor, security engineer, admin | OCSF-style NDJSON for a SIEM (`?after_id=` cursor) |
 | `GET` | `/alerts` | auditor, security engineer, admin | Detection findings (`?status=`, `?severity=`) |
 | `POST` | `/alerts/{id}/resolve` | security engineer (not about themselves) | Close an alert (`{note, false_positive}`) |
@@ -270,6 +271,27 @@ entry)`. Editing, deleting or reordering a row breaks the chain from that point 
 someone with only database access cannot rebuild a valid chain. A UNIQUE constraint on
 `prev_hash` stops concurrent writers from forking it.
 
+**Signed checkpoints** close the gap a chain alone leaves: deleting the *newest* entries
+leaves a shorter chain that still verifies. Every `AEGIS_CHECKPOINT_INTERVAL_MINUTES`
+(default 15), or on `POST /audit-logs/checkpoints`, Aegis signs "the log had N entries ending
+at entry #id with hash h" with an Ed25519 key (`AEGIS_CHECKPOINT_KEY`, separate from the HMAC
+key) and appends it to `AEGIS_CHECKPOINT_FILE`, outside the database. Checkpoints are linked
+by hash, and `/audit-logs/verify` checks each signature, the links, and that the database
+still holds what each one vouches for. So it catches truncation, removing a checkpoint, and
+even an insider with the HMAC key rewriting the newest entries. `GET /audit-logs/checkpoints`
+publishes the public key, so anyone can check the file independently
+([`checkpoints.py`](../app/checkpoints.py)).
+
+## Rate limiting
+
+Token buckets per caller on the endpoints worth abusing ([`ratelimit.py`](../app/ratelimit.py)):
+sign-in (30 a minute per client address), MFA codes (10 a minute per user, on top of the
+five-strikes lockout), access requests (30 a minute per user; each may call the LLM) and policy
+simulation (60 a minute). Over the limit the API answers `429` with `Retry-After`, and the
+first refusal in a run is audited (`RATE_LIMITED`), so a flood can't flood the audit log too.
+The buckets are per process and memory-bounded; with several instances, enforce the same
+limits at the gateway. `AEGIS_RATE_LIMITS=false` turns them off.
+
 ## Detection and governance
 
 **Detection rules** (`app/detection.py`) run after every request, in the same transaction.
@@ -335,6 +357,9 @@ before review are counted as `ended`. Every step is in the audit chain
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
 | `AEGIS_MFA_MAX_AGE_MINUTES` | `15` (how recent a second factor must be for step-up actions) |
 | `AEGIS_OIDC_MFA_ACR` | unset (comma-separated IdP `acr` values that count as MFA; `amr` values like `mfa` and `otp` always do) |
+| `AEGIS_CHECKPOINT_KEY` | derived from the audit key, with a warning. Base64 Ed25519 seed (32 bytes); **set this in any real deployment** |
+| `AEGIS_CHECKPOINT_FILE`, `AEGIS_CHECKPOINT_INTERVAL_MINUTES` | `./audit-checkpoints.jsonl`, `15` |
+| `AEGIS_RATE_LIMITS` | `true` |
 | `AEGIS_SCIM_TOKEN` | unset (SCIM disabled). Set a long random value and give it to the IdP to enable `/scim/v2` |
 
 ## Live demo

@@ -19,6 +19,7 @@ network in between. Three things are swapped for the browser:
 It also adds a demo clock (:func:`advance`) so expiry can be shown without waiting hours.
 """
 
+import base64
 import contextlib
 import datetime as _dt
 import io
@@ -26,6 +27,7 @@ import json
 import os
 import secrets
 import sys
+import tempfile
 import types
 
 # Settings are read once, on import, so these come first.
@@ -40,6 +42,9 @@ os.environ.update(
     AEGIS_AUDIT_KEY=secrets.token_hex(32),
     # The page's "identity provider" tab provisions people over SCIM with this token.
     AEGIS_SCIM_TOKEN=secrets.token_hex(32),
+    # Signed audit checkpoints, kept outside the database as on a server.
+    AEGIS_CHECKPOINT_KEY=base64.b64encode(secrets.token_bytes(32)).decode(),
+    AEGIS_CHECKPOINT_FILE=os.path.join(tempfile.gettempdir(), "aegis-checkpoints.jsonl"),
 )
 
 # llm_parser imports the Anthropic SDK at the top of the module. It's never called in
@@ -178,7 +183,7 @@ jwt.api_jwt.datetime = DemoDatetime
 from sqlalchemy import select, text  # noqa: E402
 
 import seed_data  # noqa: E402
-from app import scheduler  # noqa: E402
+from app import checkpoints, scheduler  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 
@@ -267,8 +272,10 @@ async def scim(method: str, path: str, body: str | None = None) -> str:
 
 
 def sweep() -> None:
-    """What the server's scheduler does every minute: revoke expired grants, expire stale requests."""
+    """What the server's scheduler does: revoke expired grants, expire stale requests, close
+    overdue recertifications, and sign an audit checkpoint."""
     scheduler.run_sweep()
+    checkpoints.create_now()
 
 
 def advance(hours: float) -> str:
@@ -299,6 +306,20 @@ def tamper() -> int | None:
         target = ids[len(ids) // 2]
         conn.execute(text("UPDATE audit_logs SET detail = detail || ' (edited)' WHERE id = :id"), {"id": target})
     return target
+
+
+def truncate(count: int = 3) -> list[int]:
+    """Delete the newest audit entries, the way someone with database access could hide what
+    they just did. What's left is still a valid HMAC chain; only the signed checkpoint, which
+    lives outside the database, can tell. Returns the deleted ids."""
+    checkpoints.create_now()  # the scheduler signs one every few minutes; make sure one covers them
+    with database.engine.begin() as conn:
+        ids = conn.execute(text("SELECT id FROM audit_logs ORDER BY id DESC LIMIT :n"), {"n": count}).scalars().all()
+        conn.execute(
+            text("DELETE FROM audit_logs WHERE id IN (SELECT id FROM audit_logs ORDER BY id DESC LIMIT :n)"),
+            {"n": count},
+        )
+    return sorted(ids)
 
 
 reset()

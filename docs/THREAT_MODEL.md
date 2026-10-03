@@ -55,6 +55,8 @@ threat is mitigated, and what is *not* mitigated.
 
 | Threat | Mitigation | Evidence |
 |---|---|---|
+| Deleting the newest audit entries (a shorter chain still verifies) | Ed25519-signed checkpoints outside the database, linked by hash | `test_truncating_the_log_is_caught`, `test_editing_or_removing_checkpoints_is_caught` |
+| An insider with the HMAC key rewriting recent history | Checkpoints are signed with a different key | `test_rewriting_an_entry_with_the_hmac_key_is_caught` |
 | Editing, deleting or reordering audit rows | HMAC-SHA256 hash chain keyed outside the DB. `/audit-logs/verify` reports the first broken link | `test_detects_edited_entry`, `test_detects_deleted_entry` |
 | Two writers forking the chain | UNIQUE `prev_hash`, plus an in-process lock | `app/audit.py` |
 | LLM output steering the decision | Output is schema-constrained, the resource snapped to the catalog, duration bounded. Cedar decides using attributes from the DB | `test_hijacked_llm_cannot_grant_beyond_policy` |
@@ -83,7 +85,7 @@ threat is mitigated, and what is *not* mitigated.
 
 | Threat | Mitigation |
 |---|---|
-| Flooding requests or approvals | Pending requests expire after 24h, and the `repeated-denials` rule flags probing. **There is no rate limiting**; that belongs in a gateway in front of Aegis |
+| Flooding requests or approvals | Pending requests expire after 24h, and the `repeated-denials` rule flags probing; per-user rate limits cap the volume (see the row above) |
 | LLM outage | In `auto` mode Aegis falls back to the heuristic parser; `anthropic` mode returns 502 |
 | Revocation lost when AWS is down | The local revoke still happens, and a `CLOUD_REVOCATION_FAILED` event says manual action is needed |
 
@@ -91,6 +93,7 @@ threat is mitigated, and what is *not* mitigated.
 
 | Threat | Mitigation | Evidence |
 |---|---|---|
+| Flooding sign-in, MFA codes, access requests (LLM cost) or simulation | Per-caller token buckets, 429 with Retry-After; the first refusal in a run is audited | `test_sign_in_is_rate_limited_and_audited_once` |
 | Self-approval | The requester is never an eligible approver, not even a security engineer | `test_self_approval_blocked_even_for_approver_roles` |
 | An identity admin granting themselves access | Admins have no resource privileges and aren't approvers, and they can't edit their own account | `test_mover_access_is_revoked_and_admin_cannot_self_modify` |
 | Attributes changing between request and approval | The policy is re-evaluated when the approver acts | `test_policy_is_rechecked_at_approval_time` |
@@ -105,10 +108,11 @@ threat is mitigated, and what is *not* mitigated.
 
 Being explicit about these matters as much as the mitigations above.
 
-- **Truncating the end of the audit log isn't detected by the chain alone.** Deleting the
-  newest N rows leaves a valid, shorter chain. The mitigation is the independent SIEM copy
-  (the push stream or `metadata.uid`) and anchoring the head hash elsewhere. A production
-  deployment should also use an append-only store (for example S3 Object Lock).
+- **Entries written since the last signed checkpoint can still be deleted unnoticed.**
+  Checkpoints catch truncation of anything they cover; the exposure window is the checkpoint
+  interval (15 minutes by default), and the SIEM stream covers it. Whoever can write the
+  checkpoint file can delete its newest lines too, so ship it to append-only storage (S3
+  Object Lock) or the SIEM.
 - **Compromising `AEGIS_AUDIT_KEY` allows the chain to be forged.** Keep it in a secrets
   manager or KMS, away from the database.
 - **Aegis's AWS principal is highly privileged.** It needs `sts:AssumeRole` and
@@ -130,8 +134,8 @@ Being explicit about these matters as much as the mitigations above.
 - **SQLite and a single process.** The chain lock is process-local (the UNIQUE constraint
   still prevents forks across processes). Scaling out means Postgres with the chain append
   in a serializable transaction.
-- **No rate limiting.** It belongs at the gateway; the TOTP lockout covers the one
-  brute-forceable endpoint.
+- **Rate limits are per process.** Several instances each allow the full rate; enforce the
+  same limits at the gateway or back the buckets with Redis.
 - **TOTP secrets are stored in the database unencrypted** (dev mode only; in OIDC mode the
   IdP holds the factor). A production build would encrypt them with a KMS key, or rely on the
   IdP's MFA entirely. TOTP is also phishable in real time; phishing-resistant factors

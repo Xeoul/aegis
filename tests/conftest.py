@@ -9,6 +9,7 @@ os.environ["AEGIS_SCHEDULER_ENABLED"] = "false"
 os.environ["AEGIS_LLM_MODE"] = "heuristic"
 os.environ["AEGIS_AUTH_MODE"] = "dev"
 os.environ["AEGIS_AUDIT_KEY"] = "test-audit-key"
+os.environ["AEGIS_CHECKPOINT_FILE"] = f"{_db_dir}/checkpoints.jsonl"
 # Treat every moment as business hours so the off-hours rule only fires in tests that want it.
 os.environ["AEGIS_BUSINESS_HOURS_UTC"] = "00-24"
 os.environ["AEGIS_BUSINESS_DAYS"] = "0-6"
@@ -16,6 +17,7 @@ os.environ["AEGIS_BUSINESS_DAYS"] = "0-6"
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
+from app import ratelimit  # noqa: E402
 from app.auth import create_dev_token  # noqa: E402
 from app.database import SessionLocal, utcnow  # noqa: E402
 from app.main import app  # noqa: E402
@@ -36,6 +38,7 @@ HANK = email_for("Hank Patel")  # Engineering contractor
 @pytest.fixture()
 def client():
     seed(reset=True)
+    ratelimit.reset_all()
     with TestClient(app) as c:
         yield c
 
