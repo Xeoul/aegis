@@ -67,13 +67,15 @@
     {
       "alias": "amr pwd",
       "config": {
-        "default.reference.value": "pwd"
+        "default.reference.value": "pwd",
+        "default.reference.maxAge": "36000"
       }
     },
     {
       "alias": "amr otp",
       "config": {
-        "default.reference.value": "otp"
+        "default.reference.value": "otp",
+        "default.reference.maxAge": "36000"
       }
     }
   ],
