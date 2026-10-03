@@ -26,6 +26,8 @@ How each part of the system works. For the overview, see the [README](../README.
 | `GET` | `/audit-logs/export` | auditor, security engineer, admin | OCSF-style NDJSON for a SIEM (`?after_id=` cursor) |
 | `GET` | `/alerts` | auditor, security engineer, admin | Detection findings (`?status=`, `?severity=`) |
 | `POST` | `/alerts/{id}/resolve` | security engineer (not about themselves) | Close an alert (`{note, false_positive}`) |
+| `POST` | `/policy/simulate` | auditor, security engineer, admin | What-if decision with optional role, department, sensitivity, MFA and approval overrides; nothing is granted |
+| `GET` | `/policy/tests` | auditor, security engineer, admin | Run `policies/tests.json` against the loaded policies |
 | `GET` | `/reports/access-review` | auditor, security engineer, admin | User access review with control checks (`?days=`, `?format=csv`) |
 | `GET` `POST` `PUT` `PATCH` `DELETE` | `/scim/v2/Users[/{id}]` | identity provider (SCIM token) | Joiner/mover/leaver provisioning; see [SCIM provisioning](#scim-provisioning) |
 | `GET` | `/scim/v2/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | identity provider (SCIM token) | SCIM discovery |
@@ -170,6 +172,20 @@ stands on its own, and every one that fires is returned as a reason, e.g.
 | `justification-required` | Restricted resources need a stated reason |
 | `mfa-required` | Restricted resources and break-glass need `context.mfa`: a second factor within the last 15 minutes. If this (with or without `approval-required`) is all that fires, the API answers with a step-up challenge instead of a denial; see [MFA step-up](#mfa-step-up) |
 | `approval-required` | Restricted resources and privileged actions are refused until `context.approved` is true. If this is the only guardrail that fires, the request goes to `PENDING_APPROVAL`. It is evaluated again with `approved=true` when a second person approves |
+
+**Policy tests.** [`policies/tests.json`](../policies/tests.json) pins what each guardrail
+must decide: a request (role, department, resource sensitivity and owner, action, context)
+and its outcome (`allow`, `needs-approval`, `step-up` or `deny`, and which policies decide it).
+A policy change and the cases it affects are reviewed together. CI runs the suite
+(`python -m app.policy_tests`) against the server's Cedar, and the demo smoke test runs it
+again against Cedar's WebAssembly build.
+
+**What-if simulation.** `POST /policy/simulate` (auditors, security engineers and admins)
+asks the same policies what they would decide for a real person and resource, optionally
+changed: a different role or department (a mover), a reclassified resource, with or
+without MFA, approval or break-glass. The person and resource are copied before overrides,
+so nothing stored changes and nothing is granted; the question itself is audited
+(`POLICY_SIMULATED`). `GET /policy/tests` runs the test suite against the loaded policies.
 
 Unknown roles get the lowest clearance, inactive users match no `permit`, and evaluation
 errors deny. Granted durations are capped by sensitivity: 72h public, 24h internal,

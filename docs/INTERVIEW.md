@@ -69,6 +69,14 @@ policies are validated against a schema at startup, and the app refuses to start
 invalid (fail closed). A single baseline `permit` is narrowed by `forbid` guardrails, and since
 a forbid always wins in Cedar, each denial names exactly which rule fired. That makes decisions explainable to users and auditors.
 
+**How do you know a policy change didn't break something?**
+The policies have their own test suite, `policies/tests.json`: requests and the outcome each
+must get, including which guardrail decides it. CI runs it on every change, against both the
+native Cedar build and the WebAssembly one the demo uses. For questions nobody wrote a test
+for, there's a what-if simulator: "what if Alice moved to Finance?" or "what if prod-db were
+reclassified as restricted?" It asks the real policy engine without changing or granting
+anything, and the question is audited.
+
 **How do you revoke AWS credentials early? STS tokens can't be revoked.**
 Correct, they can't be recalled. For natural expiry nothing is needed, because the session
 duration never exceeds the grant. For early revocation (manual, or a leaver), Aegis adds a

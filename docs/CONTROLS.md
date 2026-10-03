@@ -28,6 +28,8 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | **AU-10** Non-repudiation | | Actor recorded on every event; STS `SourceIdentity` lands in CloudTrail | `credentials.py` |
 | **AU-12** Audit Record Generation | | Written atomically with the change it describes (same transaction) | `audit.commit` |
 | **CA-7** Continuous Monitoring | | Control checks in the access review (self-approvals, grants held by leavers, chain integrity) | `ControlChecks` |
+| **CM-3** Configuration Change Control | | Policy changes are pinned by declarative test cases run in CI against both Cedar builds | `policies/tests.json`, `python -m app.policy_tests` |
+| **CM-4** Impact Analyses | | What-if simulation shows how a role, department or classification change would alter a decision before it's made | `POST /policy/simulate`, `test_what_if_a_mover` |
 | **IA-2** Identification and Authentication | | OIDC tokens verified against the IdP's JWKS | `auth.py` |
 | **IA-2(1)** Multi-factor Authentication to Privileged Accounts | | Restricted access, break-glass and approvals need a recent second factor (step-up) | `mfa-required` policy, `test_mfa.py` |
 | **IA-2(8)** Replay-resistant Authentication | | TOTP time steps are single use | `test_codes_cannot_be_replayed` |

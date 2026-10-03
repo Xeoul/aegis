@@ -15,7 +15,7 @@ from app import credentials, llm_parser, siem
 from app import scheduler as scheduler_module
 from app.config import settings
 from app.database import init_db
-from app.routers import access, approvals, audit, auth, governance, scim, users
+from app.routers import access, approvals, audit, auth, governance, policy, scim, users
 from app.scheduler import create_scheduler
 
 logging.basicConfig(level=os.getenv("AEGIS_LOG_LEVEL", "INFO"))
@@ -115,6 +115,6 @@ def meta() -> dict[str, object]:
     }
 
 
-for module in (auth, users, access, approvals, audit, governance, scim):
+for module in (auth, users, access, approvals, audit, governance, policy, scim):
     app.include_router(module.router)
 app.add_exception_handler(scim.ScimError, scim.error_response)

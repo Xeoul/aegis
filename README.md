@@ -20,7 +20,7 @@ exact code, including the Cedar policy engine, in your browser. See [how the dem
 | IAM / security concept | Where it lives |
 |---|---|
 | **Zero standing privilege and JIT access** | Grants expire automatically. [`scheduler.py`](app/scheduler.py) revokes them, and STS sessions never outlive the grant |
-| **ABAC with policy as code** | [Cedar](https://www.cedarpolicy.com/) policies checked against a schema: [`policies/`](policies) |
+| **ABAC with policy as code** | [Cedar](https://www.cedarpolicy.com/) policies checked against a schema, with [test cases](policies/tests.json) in CI and a what-if simulator: [`policies/`](policies) |
 | **Least privilege** | Per-grant STS session policies. Identity admins have no resource access |
 | **Separation of duties** | No self-approval, provisioning and approval kept apart, alerts not closable by their subject |
 | **Joiner / mover / leaver** | Deactivating a user or changing their attributes revokes their open access immediately |
@@ -138,6 +138,7 @@ app/
   auth.py          JWT verification (dev issuer or OIDC/JWKS), role checks
   llm_parser.py    Natural language -> fields (Claude or heuristic); injection detection
   evaluator.py     Cedar adapter: entities, decision, explanations
+  policy_tests.py  Runs policies/tests.json (python -m app.policy_tests)
   workflow.py      Approvals, separation of duties, break-glass, revocation, JML
   identity.py      Joiner/mover/leaver changes, shared by the admin API and SCIM
   mfa.py           TOTP (RFC 6238) and MFA step-up checks (RFC 9470, amr/acr)
@@ -148,10 +149,10 @@ app/
   scheduler.py     Expiry, stale approvals, revocation pruning
   routers/         HTTP endpoints
   static/          Dashboard (vanilla JS, strict CSP)
-policies/          Cedar schema, policies, role attributes
+policies/          Cedar schema, policies, role attributes, policy test cases
 scripts/           LocalStack bootstrap, Keycloak end-to-end check
 deploy/keycloak/   Keycloak realm: demo people, PKCE client, password + TOTP flow
-tests/             145 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+tests/             168 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

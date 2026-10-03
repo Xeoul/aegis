@@ -39,6 +39,8 @@ jobs:
         run: pip-audit -r requirements.txt
       - name: Cedar policies validate against schema
         run: python -c "from app.evaluator import load_policies; load_policies(); print('policies valid')"
+      - name: Cedar policy test cases (policies/tests.json)
+        run: python -m app.policy_tests
 
   test:
     runs-on: ubuntu-latest
