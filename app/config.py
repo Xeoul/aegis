@@ -23,6 +23,12 @@ class Settings:
     oidc_issuer: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_ISSUER", ""))
     oidc_audience: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_AUDIENCE", "aegis-jit"))
     oidc_jwks_url: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_JWKS_URL", ""))
+    # IdP "acr" values that count as multi-factor (amr values such as "mfa" or "otp" always do).
+    oidc_mfa_acr: tuple[str, ...] = field(
+        default_factory=lambda: tuple(v.strip() for v in os.getenv("AEGIS_OIDC_MFA_ACR", "").split(",") if v.strip())
+    )
+    # How recent a second factor must be for step-up actions (restricted access, approvals).
+    mfa_max_age_minutes: int = field(default_factory=lambda: int(os.getenv("AEGIS_MFA_MAX_AGE_MINUTES", "15")))
     # Key for the HMAC audit chain. Keep it outside the database so someone with only
     # database access cannot recompute the chain after editing history.
     audit_key: str = field(default_factory=lambda: os.getenv("AEGIS_AUDIT_KEY", ""))

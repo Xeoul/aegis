@@ -26,6 +26,7 @@ exact code, including the Cedar policy engine, in your browser. See [how the dem
 | **Joiner / mover / leaver** | Deactivating a user or changing their attributes revokes their open access immediately |
 | **SCIM 2.0 provisioning** | Okta / Entra ID drive the user lifecycle over [`/scim/v2`](docs/DESIGN.md#scim-provisioning); offboarding in the IdP revokes access at once |
 | **Break-glass** | Emergency access capped at 1h, alerted, and reviewed afterwards |
+| **MFA step-up** | Restricted access, break-glass and approvals need a recent second factor ([RFC 9470](docs/DESIGN.md#mfa-step-up)); IdP `amr`/`acr` or built-in TOTP |
 | **Federated identity** | OIDC/JWKS token validation (RS256/ES256), identity taken only from the token |
 | **Tamper-evident audit** | HMAC hash-chained log with a verify endpoint |
 | **Detection and response** | 6 detection rules, alert triage, OCSF-style SIEM export |
@@ -91,8 +92,8 @@ with Claude.
 ### A two-minute demo
 
 1. **Bob (SRE)** asks: *"Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy"*.
-   Policy allows it, but it's restricted and privileged, so it goes to `PENDING_APPROVAL`,
-   capped at 2h.
+   It's restricted, so Bob first steps up with his authenticator. Then policy allows it, but
+   it's restricted and privileged, so it goes to `PENDING_APPROVAL`, capped at 2h.
 2. **Maya (Bob's manager)** approves it from her queue. Bob can't approve it himself, and
    neither can Iris (identity admin) or Grace (auditor).
 3. **Frank (intern)** asks to edit the payroll system. Three guardrails deny it (clearance,
@@ -132,6 +133,7 @@ app/
   evaluator.py     Cedar adapter: entities, decision, explanations
   workflow.py      Approvals, separation of duties, break-glass, revocation, JML
   identity.py      Joiner/mover/leaver changes, shared by the admin API and SCIM
+  mfa.py           TOTP (RFC 6238) and MFA step-up checks (RFC 9470, amr/acr)
   credentials.py   AWS STS broker: scoped AssumeRole, session revocation
   detection.py     Detection rules -> alerts
   audit.py         HMAC hash-chained audit log + verifier
@@ -141,7 +143,7 @@ app/
   static/          Dashboard (vanilla JS, strict CSP)
 policies/          Cedar schema, policies, role attributes
 scripts/           LocalStack bootstrap
-tests/             127 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+tests/             144 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

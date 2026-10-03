@@ -31,15 +31,26 @@ PRODUCT = {"name": "Aegis-JIT", "vendor_name": "aegis-jit", "version": "0.5.0"}
 _ACCOUNT_CHANGE = (3001, "Account Change", 3, "Identity & Access Management")
 _AUTHORIZE = (3003, "Authorize Session", 3, "Identity & Access Management")
 _FINDING = (2004, "Detection Finding", 2, "Findings")
+_AUTHENTICATION = (3002, "Authentication", 3, "Identity & Access Management")
 
 _EVENT_CLASS = {
     AuditEvent.USER_CREATED: _ACCOUNT_CHANGE,
     AuditEvent.USER_UPDATED: _ACCOUNT_CHANGE,
     AuditEvent.USER_DEACTIVATED: _ACCOUNT_CHANGE,
+    AuditEvent.MFA_ENROLLED: _ACCOUNT_CHANGE,
+    AuditEvent.MFA_RESET: _ACCOUNT_CHANGE,
+    AuditEvent.MFA_VERIFIED: _AUTHENTICATION,
+    AuditEvent.MFA_FAILED: _AUTHENTICATION,
     AuditEvent.ALERT_RAISED: _FINDING,
     AuditEvent.ALERT_RESOLVED: _FINDING,
 }
-_FAILURES = {AuditEvent.ACCESS_DENIED, AuditEvent.REQUEST_REJECTED, AuditEvent.CLOUD_REVOCATION_FAILED}
+_FAILURES = {
+    AuditEvent.MFA_FAILED,
+    AuditEvent.STEP_UP_REQUIRED,
+    AuditEvent.ACCESS_DENIED,
+    AuditEvent.REQUEST_REJECTED,
+    AuditEvent.CLOUD_REVOCATION_FAILED,
+}
 # OCSF severity_id: 1 informational, 2 low, 3 medium, 4 high.
 _SEVERITY = {
     AuditEvent.ACCESS_DENIED: 2,
@@ -47,6 +58,8 @@ _SEVERITY = {
     AuditEvent.CLOUD_REVOCATION_FAILED: 4,
     AuditEvent.ALERT_RAISED: 3,
     AuditEvent.USER_DEACTIVATED: 2,
+    AuditEvent.MFA_FAILED: 3,
+    AuditEvent.MFA_RESET: 3,
 }
 
 

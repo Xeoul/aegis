@@ -282,6 +282,13 @@ def now() -> str:
     return database.utcnow().isoformat(timespec="seconds")
 
 
+def totp(secret: str) -> str:
+    """The code a persona's authenticator app would show now (on the demo clock)."""
+    from app import mfa
+
+    return mfa.totp(secret, database.utcnow())
+
+
 def tamper() -> int | None:
     """Quietly edit one audit entry in the database, the way someone with only database access
     could, so the page can show the chain check catching it. Returns the edited entry's id."""

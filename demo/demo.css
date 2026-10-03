@@ -189,6 +189,13 @@ button:disabled { cursor: progress; opacity: 0.6; }
 .result { margin-top: 18px; scroll-margin-bottom: 90px; padding: 16px; border-radius: 9px; border: 1px solid var(--border); }
 .result-allow { background: var(--allow-tint); border-color: transparent; }
 .result-deny, .result-error { background: var(--deny-tint); border-color: transparent; }
+.result-stepup { background: var(--wait-tint); border-color: transparent; }
+.result-stepup > p { margin: 10px 0 0; font-size: 14px; }
+.decision-stepup { color: var(--wait); }
+.authenticator { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 12px; padding: 12px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
+.authenticator .field-label { flex-basis: 100%; margin: 0; }
+.otp { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: 0.08em; color: var(--ink); }
+.stepup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .result-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .decision { font-weight: 700; font-size: 15px; letter-spacing: 0.04em; }
 .decision-allow { color: var(--allow); }

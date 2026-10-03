@@ -6,16 +6,17 @@ issuer and any external OIDC provider.
 """
 
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import mfa
 from app.config import settings
 from app.database import get_db, utcnow
 from app.models import User
@@ -29,10 +30,12 @@ OVERSIGHT_ROLES = {"auditor", "security engineer"}
 _bearer = HTTPBearer(auto_error=False)
 
 
-def create_dev_token(user: User) -> tuple[str, int]:
+def create_dev_token(user: User, *, mfa_at: datetime | None = None) -> tuple[str, int]:
+    """A token from the stand-in issuer. ``mfa_at`` marks a completed TOTP step-up, using the
+    same claims an IdP would: ``amr`` (RFC 8176), ``acr`` and ``auth_time``."""
     ttl = settings.token_ttl_minutes * 60
     now = utcnow()
-    claims = {
+    claims: dict[str, Any] = {
         "iss": DEV_ISSUER,
         "aud": DEV_AUDIENCE,
         "sub": str(user.id),
@@ -42,6 +45,8 @@ def create_dev_token(user: User) -> tuple[str, int]:
         "exp": now + timedelta(seconds=ttl),
         "jti": uuid.uuid4().hex,
     }
+    if mfa_at is not None:
+        claims.update(amr=["pwd", "otp", "mfa"], acr=mfa.ACR_MFA, auth_time=int(mfa_at.replace(tzinfo=UTC).timestamp()))
     return jwt.encode(claims, settings.jwt_secret, algorithm="HS256"), ttl
 
 
@@ -77,6 +82,7 @@ def _unauthorized(detail: str) -> HTTPException:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
@@ -95,7 +101,13 @@ def get_current_user(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Authenticated identity is not provisioned in Aegis")
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User account is deactivated")
+    request.state.mfa = mfa.is_fresh(claims, utcnow())
     return user
+
+
+def has_fresh_mfa(request: Request) -> bool:
+    """Whether this request's token carries a recent second factor (after get_current_user)."""
+    return bool(getattr(request.state, "mfa", False))
 
 
 def is_oversight(user: User) -> bool:

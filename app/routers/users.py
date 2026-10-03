@@ -56,6 +56,20 @@ def update_user(
     return user
 
 
+@router.post("/users/{user_id}/mfa/reset", response_model=UserOut, tags=["users"])
+def reset_mfa(user_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)) -> User:
+    """Clear a lost or locked authenticator; the user enrolls again. Never on yourself."""
+    if user_id == admin.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Administrators cannot reset their own MFA")
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {user_id} not found")
+    user.totp_secret, user.totp_confirmed, user.totp_last_step, user.totp_failures = None, False, None, 0
+    audit.record(db, AuditEvent.MFA_RESET, user_id=user.id, actor_id=admin.id, detail="Authenticator reset.")
+    audit.commit(db)
+    return user
+
+
 @router.get("/users", response_model=list[UserOut], tags=["users"])
 def list_users(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[User]:
     return list(db.scalars(select(User).order_by(User.id)))

@@ -14,7 +14,7 @@ const SWEEP_MS = 60 * 1000; // the server's scheduler runs every minute too
 const EXAMPLES = [
     { who: 'alice.chen', text: 'Read access to prod-db for 4 hours to debug a failing migration', note: 'Allowed straight away' },
     { who: 'frank.lee', text: 'let me edit payroll-system for a day', note: 'Denied by policy' },
-    { who: 'bob.martinez', text: 'Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy', note: 'Needs a second approver' },
+    { who: 'bob.martinez', text: 'Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy', note: 'MFA step-up, then a second approver' },
     { who: 'bob.martinez', text: 'Admin on prod-k8s-cluster now to stop a live outage', breakGlass: true, note: 'Break-glass: granted, reviewed later' },
     { who: 'hank.patel', text: 'write access to ci-pipeline for 3 days to fix the release build', note: 'Allowed, shortened to 24h' },
     { who: 'carol.singh', text: 'delete the old rows in payroll-system to clean up', note: 'Denied: delete is privileged' },
@@ -40,6 +40,7 @@ let bridge = null;
 let people = [];
 let current = null;
 const tokens = new Map();
+const authenticators = new Map(); // email -> TOTP secret, i.e. what's on each person's phone
 
 // ---------------------------------------------------------------- small DOM helper
 
@@ -130,7 +131,8 @@ async function tokenFor(person) {
 function api(method, path, body) {
     const run = async () => {
         let res = await rawCall(method, path, await tokenFor(current), body);
-        if (res.status === 401) {
+        // A step-up challenge or a wrong code isn't an expired token: signing in again won't help.
+        if (res.status === 401 && !isChallenge(res) && !path.startsWith('/auth/')) {
             tokens.delete(current.email);
             res = await rawCall(method, path, await tokenFor(current), body);
         }
@@ -144,7 +146,85 @@ function api(method, path, body) {
 function detail(res) {
     const d = res.body && res.body.detail;
     if (Array.isArray(d)) return d.map((e) => e.msg).join('; ');
+    if (d && typeof d === 'object') return d.message || JSON.stringify(d);
     return d || `HTTP ${res.status}`;
+}
+
+// ---------------------------------------------------------------- MFA step-up
+
+// Aegis answers 401 insufficient_user_authentication (RFC 9470) when an action needs a
+// recent second factor: restricted resources, break-glass, approving someone's access.
+function isChallenge(res) {
+    return res.status === 401 && Boolean(res.body && res.body.detail && res.body.detail.error === 'insufficient_user_authentication');
+}
+
+// The page stops counting as busy while it waits for the person to act.
+async function awaitPerson(promise) {
+    busyCount -= 1;
+    if (!busyCount) delete document.documentElement.dataset.busy;
+    try {
+        return await promise;
+    } finally {
+        busyCount += 1;
+        document.documentElement.dataset.busy = 'true';
+    }
+}
+
+async function withStepUp(run) {
+    const res = await run();
+    if (!isChallenge(res)) return res;
+    return (await stepUp(res.body.detail.message)) ? run() : res;
+}
+
+// Shows the person's authenticator app (simulated) and resolves true once they've stepped up.
+async function stepUp(message) {
+    const person = current;
+    let note = null;
+    if (!authenticators.has(person.email)) {
+        const enrolled = await api('POST', '/auth/mfa/enroll');
+        if (enrolled.status !== 200) {
+            toast(detail(enrolled));
+            return false;
+        }
+        authenticators.set(person.email, enrolled.body.secret);
+        note = h('p', { class: 'meta' }, `First time, so ${person.name.split(' ')[0]} just enrolled an authenticator app by scanning `, h('code', null, decodeURIComponent(enrolled.body.otpauth_uri.split('?')[0])), '. On a server with an identity provider, its MFA (Okta Verify, a passkey) does this step.');
+    }
+    const secret = authenticators.get(person.email);
+    const code = h('code', { class: 'otp', 'aria-live': 'polite' });
+    const left = h('span', { class: 'muted' });
+    const tick = () => {
+        const c = bridge.totp(secret);
+        code.textContent = `${c.slice(0, 3)} ${c.slice(3)}`;
+        left.textContent = `new code in ${30 - (parseUtc(bridge.now()).getUTCSeconds() % 30)}s`;
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    let settle;
+    const done = new Promise((resolve) => { settle = resolve; });
+    const verify = h('button', { type: 'button', class: 'primary', onclick: () => busy(async () => {
+        const res = await api('POST', '/auth/step-up', { code: code.textContent.replace(' ', '') });
+        if (res.status !== 200) return toast(detail(res));
+        tokens.set(person.email, res.body.access_token);
+        toast(`${person.name} stepped up with a one-time code. Retrying…`);
+        settle(true);
+    }) }, 'Verify with this code');
+    const cancel = h('button', { type: 'button', class: 'secondary', onclick: () => settle(false) }, 'Cancel');
+    const card = h('div', { class: 'result result-stepup' },
+        h('div', { class: 'result-head' }, h('span', { class: 'decision decision-stepup' }, 'STEP-UP'), h('span', { class: 'muted' }, '401 insufficient_user_authentication')),
+        h('p', null, message),
+        h('div', { class: 'authenticator' },
+            h('span', { class: 'field-label' }, `${person.name}’s authenticator app`), code, left),
+        note,
+        h('p', { class: 'meta' }, 'A stolen session token alone can’t do this. Codes are RFC 6238 TOTP, single use, and five wrong ones lock the authenticator and raise an alert.'),
+        h('div', { class: 'stepup-actions' }, verify, cancel));
+    $('result').replaceChildren(card);
+    card.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    try {
+        return await awaitPerson(done);
+    } finally {
+        clearInterval(timer);
+        if (card.isConnected) card.remove();
+    }
 }
 
 // ---------------------------------------------------------------- people
@@ -224,7 +304,8 @@ async function sendRequest(e) {
     const button = e.target.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-        const res = await api('POST', '/request-access', { request_text: text, break_glass: $('break-glass').checked });
+        const body = { request_text: text, break_glass: $('break-glass').checked };
+        const res = await withStepUp(() => api('POST', '/request-access', body));
         renderDecision(res);
         const shown = $('result').firstElementChild;
         if (shown) shown.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -319,7 +400,7 @@ async function renderApprovals() {
         const r = t.request;
         const actions = t.kind === 'approval'
             ? h('div', { class: 'actions' },
-                inlineAction('Approve', 'Approved for this change', (comment) => api('POST', `/requests/${r.id}/approve`, { comment })),
+                inlineAction('Approve', 'Approved for this change', (comment) => withStepUp(() => api('POST', `/requests/${r.id}/approve`, { comment }))),
                 inlineAction('Reject', 'Not justified', (comment) => api('POST', `/requests/${r.id}/reject`, { comment }), { danger: true }))
             : inlineAction('Mark reviewed', 'Reviewed after the incident', (comment) => api('POST', `/requests/${r.id}/review`, { comment }));
         const row = requestRow(r, actions);
@@ -602,6 +683,7 @@ async function boot() {
     $('reset').addEventListener('click', () => busy(async () => {
         bridge.reset();
         tokens.clear();
+        authenticators.clear();
         lastScim = null;
         loadPeople();
         $('result').replaceChildren();

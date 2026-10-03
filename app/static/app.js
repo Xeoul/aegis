@@ -68,13 +68,18 @@ function ask(anchor, { placeholder, submit, tone = "primary" }, onSubmit) {
 
 // --- API -----------------------------------------------------------------------
 
-async function api(path, opts = {}) {
+async function api(path, opts = {}, retried = false) {
   const headers = { "content-type": "application/json" };
   if (state.token) headers.authorization = `Bearer ${state.token}`;
   const resp = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
-  if (resp.status === 401 && state.token) { logout(); throw new Error("Session expired"); }
   const isJson = (resp.headers.get("content-type") || "").includes("json");
   const body = isJson ? await resp.json() : await resp.text();
+  // RFC 9470 step-up: the action needs a recent second factor. Verify one, then retry once.
+  if (resp.status === 401 && body?.detail?.error === "insufficient_user_authentication" && !retried) {
+    if (await stepUp(body.detail.message)) return api(path, opts, true);
+    throw new Error("Step-up cancelled: " + body.detail.message);
+  }
+  if (resp.status === 401 && state.token && !path.startsWith("/auth/")) { logout(); throw new Error("Session expired"); }
   if (!resp.ok) {
     const detail = isJson ? (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail)) : body;
     throw new Error(detail || resp.statusText);
@@ -82,6 +87,49 @@ async function api(path, opts = {}) {
   return body;
 }
 const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data || {}) });
+
+// --- MFA step-up -------------------------------------------------------------------
+
+// Asks for a TOTP code in a dialog (enrolling an authenticator first if needed) and swaps the
+// session token for one that records the second factor. Resolves false if cancelled.
+async function stepUp(message) {
+  let enrollment = null;
+  if (!state.me?.mfa_enrolled) enrollment = await post("/auth/mfa/enroll");
+  return new Promise((resolve) => {
+    const code = h("input", { inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9 ]{6,7}", maxlength: "7", required: true, placeholder: "123 456", "aria-label": "6-digit code" });
+    const error = h("p", { class: "error", role: "alert" });
+    const dialog = h("dialog", { class: "stepup" },
+      h("form", { method: "dialog" },
+        h("h2", {}, "Confirm it's you"),
+        h("p", {}, message),
+        enrollment && h("div", { class: "enroll" },
+          h("p", {}, "First, add Aegis to your authenticator app with this key:"),
+          h("code", {}, enrollment.secret.replace(/(.{4})/g, "$1 ").trim()),
+          h("p", { class: "muted" }, enrollment.otpauth_uri)),
+        h("label", {}, "Code from your authenticator app", code),
+        error,
+        h("div", { class: "row" },
+          h("button", { class: "primary", value: "verify" }, "Verify"),
+          h("button", { class: "ghost", value: "cancel", formnovalidate: true }, "Cancel"))));
+    dialog.addEventListener("close", () => { dialog.remove(); resolve(dialog.returnValue === "ok"); });
+    dialog.querySelector("form").addEventListener("submit", async (ev) => {
+      if (ev.submitter?.value === "cancel") return;
+      ev.preventDefault();
+      try {
+        const { access_token } = await post("/auth/step-up", { code: code.value.replace(/\s/g, "") });
+        state.token = access_token;
+        state.me = { ...state.me, mfa_enrolled: true };
+        try { sessionStorage.setItem("aegis-token", access_token); } catch (_) { /* storage unavailable */ }
+        dialog.close("ok");
+      } catch (e) {
+        error.textContent = e.message;
+        code.select();
+      }
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
 
 // --- Theme ---------------------------------------------------------------------
 

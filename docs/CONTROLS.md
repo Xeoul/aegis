@@ -29,6 +29,9 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | **AU-12** Audit Record Generation | | Written atomically with the change it describes (same transaction) | `audit.commit` |
 | **CA-7** Continuous Monitoring | | Control checks in the access review (self-approvals, grants held by leavers, chain integrity) | `ControlChecks` |
 | **IA-2** Identification and Authentication | | OIDC tokens verified against the IdP's JWKS | `auth.py` |
+| **IA-2(1)** Multi-factor Authentication to Privileged Accounts | | Restricted access, break-glass and approvals need a recent second factor (step-up) | `mfa-required` policy, `test_mfa.py` |
+| **IA-2(8)** Replay-resistant Authentication | | TOTP time steps are single use | `test_codes_cannot_be_replayed` |
+| **AC-7** Unsuccessful Logon Attempts | | Five wrong MFA codes lock the authenticator and raise an alert; an admin resets it | `test_brute_force_locks_and_alerts_then_admin_resets` |
 | **IA-5** Authenticator Management | | No passwords stored; short-lived tokens; STS credentials never stored | `auth.py`, `credentials.py` |
 | **SI-4** System Monitoring | | Six detection rules, including prompt injection and privilege escalation | `detection.py` |
 | **SI-10** Information Input Validation | | Pydantic schemas; LLM input sanitized and output constrained | `schemas.py`, `llm_parser.py` |
@@ -54,6 +57,6 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | **5.18** Access rights | JIT grants, approval, periodic review, removal on change |
 | **8.2** Privileged access rights | Approval required, break-glass with review, time limits |
 | **8.3** Information access restriction | Department boundaries, clearance levels |
-| **8.5** Secure authentication | OIDC/JWKS verification |
+| **8.5** Secure authentication | OIDC/JWKS verification; MFA step-up for high-risk actions |
 | **8.15** Logging | Hash-chained audit, SIEM export |
 | **8.16** Monitoring activities | Detection rules |

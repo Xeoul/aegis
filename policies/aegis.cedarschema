@@ -20,6 +20,8 @@ entity Resource = {
 type RequestContext = {
   has_justification: Bool,
   approved: Bool,           // a second person has approved this request
+  mfa: Bool,                // the requester signed in with a second factor recently
+  break_glass: Bool,        // emergency access that skips approval
 };
 
 action read, write, delete, admin appliesTo {

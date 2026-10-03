@@ -44,6 +44,9 @@ threat is mitigated, and what is *not* mitigated.
 | Forged or tampered JWT | Signature verification; `iss`, `aud`, `exp`, `iat` required | `test_rejects_invalid_tokens` |
 | `alg=none` / HS-RS algorithm confusion | Algorithms are an explicit allowlist per mode (HS256 in dev, RS256/ES256 in OIDC) | `test_rejects_alg_none`, `test_oidc_mode_verifies_rs256_against_jwks` |
 | A leaver keeps using a still-valid token | `is_active` is checked on every request, not just at login | `test_unprovisioned_and_deactivated_users_are_forbidden` |
+| A stolen session token used for high-risk actions | Restricted access, break-glass and approvals need a second factor from the last 15 minutes (RFC 9470 step-up) | `test_restricted_request_gets_rfc_9470_challenge_then_succeeds`, `test_approver_must_step_up`, `test_mfa_goes_stale` |
+| TOTP code replay or guessing | Single-use time steps, ±1 step drift only, lockout and a high-severity alert after 5 wrong codes | `test_codes_cannot_be_replayed`, `test_brute_force_locks_and_alerts_then_admin_resets` |
+| An attacker with a session swapping in their own authenticator | Re-enrolling a confirmed authenticator needs a fresh MFA token | `test_replacing_an_authenticator_needs_the_current_one` |
 | Calling SCIM as a user, or without the IdP's token | SCIM accepts only `AEGIS_SCIM_TOKEN` (constant-time compare); user JWTs are refused, and SCIM is off when the variable is unset | `test_rejects_missing_or_wrong_token`, `test_disabled_without_a_token` |
 | Dev token endpoint used in production | Only enabled when `AEGIS_AUTH_MODE=dev`, with a warning at startup. In OIDC mode it returns 404 | `test_dev_token_disabled_in_oidc_mode` |
 
@@ -123,4 +126,9 @@ Being explicit about these matters as much as the mitigations above.
 - **SQLite and a single process.** The chain lock is process-local (the UNIQUE constraint
   still prevents forks across processes). Scaling out means Postgres with the chain append
   in a serializable transaction.
-- **No rate limiting and no MFA step-up** for high-risk requests. Both are natural next steps.
+- **No rate limiting.** It belongs at the gateway; the TOTP lockout covers the one
+  brute-forceable endpoint.
+- **TOTP secrets are stored in the database unencrypted** (dev mode only; in OIDC mode the
+  IdP holds the factor). A production build would encrypt them with a KMS key, or rely on the
+  IdP's MFA entirely. TOTP is also phishable in real time; phishing-resistant factors
+  (WebAuthn passkeys, `amr: hwk`) are accepted from the IdP.
