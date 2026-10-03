@@ -28,6 +28,9 @@ How each part of the system works. For the overview, see the [README](../README.
 | `POST` | `/alerts/{id}/resolve` | security engineer (not about themselves) | Close an alert (`{note, false_positive}`) |
 | `POST` | `/policy/simulate` | auditor, security engineer, admin | What-if decision with optional role, department, sensitivity, MFA and approval overrides; nothing is granted |
 | `GET` | `/policy/tests` | auditor, security engineer, admin | Run `policies/tests.json` against the loaded policies |
+| `POST` | `/certifications` | auditor, security engineer, admin | Start a recertification of every active grant (`{name, due_in_hours}`) |
+| `GET` | `/certifications`, `/certifications/{id}` | auditor, security engineer, admin | Campaigns with certified / revoked / pending / ended counts |
+| `POST` | `/certifications/items/{id}/certify`, `/revoke` | eligible reviewer (never the holder) | Confirm or end one grant (`{comment}`); open items also appear in `/approvals` |
 | `GET` | `/reports/access-review` | auditor, security engineer, admin | User access review with control checks (`?days=`, `?format=csv`) |
 | `GET` `POST` `PUT` `PATCH` `DELETE` | `/scim/v2/Users[/{id}]` | identity provider (SCIM token) | Joiner/mover/leaver provisioning; see [SCIM provisioning](#scim-provisioning) |
 | `GET` | `/scim/v2/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | identity provider (SCIM token) | SCIM discovery |
@@ -296,6 +299,18 @@ Session 3003, Detection Finding 2004). They can be pushed as JSON lines
 (`AEGIS_SIEM_LOG_FILE=/path` or `stdout`, for Splunk UF, Filebeat or Fluent Bit) or pulled from
 `/audit-logs/export?after_id=N`. Each event carries its chain hash in `metadata.uid`, so the
 SIEM copy can be checked against the source.
+
+## Access recertification
+
+An access review report shows what people hold; a recertification makes someone answer for
+it. An auditor or security engineer starts a campaign (`POST /certifications`), which
+snapshots every active grant. Each one appears in the approval queue of the people who could
+have approved it (the holder's manager, a manager of the owning department, or security,
+never the holder), who certify it (with a comment) or revoke it. When the deadline passes,
+the scheduler closes the campaign and **revokes every grant nobody certified**, so an ignored
+review fails closed rather than rubber-stamping access. Grants that expired or were revoked
+before review are counted as `ended`. Every step is in the audit chain
+(`CERTIFICATION_STARTED`, `ACCESS_CERTIFIED`, `ACCESS_REVOKED`, `CERTIFICATION_CLOSED`).
 
 ## Configuration
 

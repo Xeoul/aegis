@@ -6,9 +6,19 @@ from app import audit, mfa, workflow
 from app.auth import get_current_user, has_fresh_mfa
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
-from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
+from app.models import (
+    AccessRequest,
+    AuditEvent,
+    CampaignStatus,
+    CertificationCampaign,
+    CertificationDecision,
+    CertificationItem,
+    RequestStatus,
+    Resource,
+    User,
+)
 from app.routers.access import load_request
-from app.schemas import ApprovalTaskOut, CommentIn, ParsedPolicy, RequestOut
+from app.schemas import ApprovalTaskOut, CertificationTaskOut, CommentIn, ParsedPolicy, RequestOut
 
 router = APIRouter(tags=["approvals"])
 
@@ -39,6 +49,34 @@ def approval_queue(user: User = Depends(get_current_user), db: Session = Depends
         if ok:
             kind = "approval" if req.status == RequestStatus.PENDING_APPROVAL else "break_glass_review"
             tasks.append(ApprovalTaskOut(kind=kind, eligibility=reason, request=RequestOut.model_validate(req)))
+    # Recertification items for grants that are still active, in open campaigns.
+    items = db.scalars(
+        select(CertificationItem)
+        .join(CertificationCampaign)
+        .join(AccessRequest, CertificationItem.request_id == AccessRequest.id)
+        .where(
+            CertificationCampaign.status == CampaignStatus.OPEN,
+            CertificationItem.decision == CertificationDecision.PENDING,
+            AccessRequest.status == RequestStatus.ACTIVE,
+        )
+        .order_by(CertificationItem.id)
+    ).all()
+    for item in items:
+        ok, reason = workflow.approver_eligibility(user, item.request, resources.get(item.request.resource))
+        if ok:
+            tasks.append(
+                ApprovalTaskOut(
+                    kind="certification",
+                    eligibility=reason,
+                    request=RequestOut.model_validate(item.request),
+                    certification=CertificationTaskOut(
+                        item_id=item.id,
+                        campaign_id=item.campaign_id,
+                        campaign=item.campaign.name,
+                        due_at=item.campaign.due_at,
+                    ),
+                )
+            )
     return tasks
 
 

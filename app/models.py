@@ -54,6 +54,21 @@ class AuditEvent(str, enum.Enum):
     MFA_RESET = "MFA_RESET"
     STEP_UP_REQUIRED = "STEP_UP_REQUIRED"
     POLICY_SIMULATED = "POLICY_SIMULATED"
+    CERTIFICATION_STARTED = "CERTIFICATION_STARTED"
+    ACCESS_CERTIFIED = "ACCESS_CERTIFIED"
+    CERTIFICATION_CLOSED = "CERTIFICATION_CLOSED"
+
+
+class CampaignStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
+class CertificationDecision(str, enum.Enum):
+    PENDING = "PENDING"
+    CERTIFIED = "CERTIFIED"  # a reviewer confirmed the access is still needed
+    REVOKED = "REVOKED"  # a reviewer, or the deadline, ended it
+    ENDED = "ENDED"  # the grant expired or was revoked before anyone reviewed it
 
 
 class AlertSeverity(str, enum.Enum):
@@ -192,3 +207,39 @@ class Alert(Base):
     resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CertificationCampaign(Base):
+    """An access recertification: every grant active at the start must be re-confirmed by an
+    eligible reviewer before ``due_at``, or it is revoked (fail closed)."""
+
+    __tablename__ = "certification_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[CampaignStatus] = mapped_column(
+        Enum(CampaignStatus, native_enum=False, length=10), default=CampaignStatus.OPEN, index=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    items: Mapped[list["CertificationItem"]] = relationship(back_populates="campaign", order_by="CertificationItem.id")
+
+
+class CertificationItem(Base):
+    __tablename__ = "certification_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("certification_campaigns.id"), index=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("access_requests.id"), index=True)
+    decision: Mapped[CertificationDecision] = mapped_column(
+        Enum(CertificationDecision, native_enum=False, length=10), default=CertificationDecision.PENDING, index=True
+    )
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    campaign: Mapped[CertificationCampaign] = relationship(back_populates="items")
+    request: Mapped[AccessRequest] = relationship()

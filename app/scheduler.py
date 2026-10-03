@@ -80,8 +80,11 @@ def prune_cloud_revocations() -> int:
 
 
 def run_sweep() -> None:
+    from app import certification  # imported here to keep the scheduler's imports light
+
     revoke_expired_grants()
     expire_stale_requests()
+    certification.close_overdue()
     prune_cloud_revocations()
 
 

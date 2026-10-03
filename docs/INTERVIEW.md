@@ -132,6 +132,12 @@ It's emergency access for incidents when no approver is around. It skips *approv
 *policy*, is capped at 1 hour, raises a high-severity alert, and stays in the approvers' queue
 until someone reviews it afterwards.
 
+**How do you do access reviews?**
+Two ways. The access review report gives auditors the evidence (who holds what, control
+checks). Recertification campaigns make people answer for it: every active grant goes to the
+people who could approve it, they certify or revoke, and anything nobody certified is revoked
+at the deadline. A review that can be ignored isn't a control, so it fails closed.
+
 **How does this map to compliance?**
 NIST 800-53 AC-2(2) (automated temporary access), AC-5 (separation of duties), AC-6 (least
 privilege), AU-9 (protection of audit information), and SOC 2 CC6.1–6.3. See
