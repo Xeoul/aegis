@@ -13,7 +13,7 @@ and detection rules flag abuse.
 **▶ Live demo: [xeoul.github.io/aegis](https://xeoul.github.io/aegis/)**. Nothing to install. It runs this
 exact code, including the Cedar policy engine, in your browser. See [how the demo works](docs/DESIGN.md#live-demo).
 
-![Approval queue](docs/img/approvals.png)
+![A tour of the live demo: a plain-English request, MFA step-up, approval, a denial with reasons, prompt-injection flagging, audit truncation caught by a signed checkpoint, SCIM offboarding and a what-if policy question](docs/img/demo.gif)
 
 ## What it demonstrates
 
