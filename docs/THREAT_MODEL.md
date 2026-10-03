@@ -21,7 +21,8 @@ threat is mitigated, and what is *not* mitigated.
                                   ├──(3)── SQLite database
                                   ├──(4)── AWS STS / IAM
                                   └──(5)── SIEM (log shipper)
- Identity provider ──(6)── JWKS ──┘
+ Identity provider ──(6)── JWKS ──┤
+                  └──(7)── SCIM ──┘
 ```
 
 1. **Client → API.** Untrusted. All input is authenticated with a bearer JWT and validated by Pydantic.
@@ -30,6 +31,8 @@ threat is mitigated, and what is *not* mitigated.
 4. **API → AWS.** Aegis holds a powerful principal that can assume and modify the brokered roles.
 5. **API → SIEM.** One-way export that keeps an independent copy of the audit trail.
 6. **IdP → API.** Tokens are trusted only after signature, issuer, audience and expiry checks.
+7. **IdP → SCIM.** The IdP's provisioning client holds `AEGIS_SCIM_TOKEN` and can create,
+   change and deactivate users, but never make anyone an Aegis administrator.
 
 ## STRIDE
 
@@ -41,6 +44,7 @@ threat is mitigated, and what is *not* mitigated.
 | Forged or tampered JWT | Signature verification; `iss`, `aud`, `exp`, `iat` required | `test_rejects_invalid_tokens` |
 | `alg=none` / HS-RS algorithm confusion | Algorithms are an explicit allowlist per mode (HS256 in dev, RS256/ES256 in OIDC) | `test_rejects_alg_none`, `test_oidc_mode_verifies_rs256_against_jwks` |
 | A leaver keeps using a still-valid token | `is_active` is checked on every request, not just at login | `test_unprovisioned_and_deactivated_users_are_forbidden` |
+| Calling SCIM as a user, or without the IdP's token | SCIM accepts only `AEGIS_SCIM_TOKEN` (constant-time compare); user JWTs are refused, and SCIM is off when the variable is unset | `test_rejects_missing_or_wrong_token`, `test_disabled_without_a_token` |
 | Dev token endpoint used in production | Only enabled when `AEGIS_AUTH_MODE=dev`, with a warning at startup. In OIDC mode it returns 404 | `test_dev_token_disabled_in_oidc_mode` |
 
 ### Tampering
@@ -87,6 +91,7 @@ threat is mitigated, and what is *not* mitigated.
 | An identity admin granting themselves access | Admins have no resource privileges and aren't approvers, and they can't edit their own account | `test_mover_access_is_revoked_and_admin_cannot_self_modify` |
 | Attributes changing between request and approval | The policy is re-evaluated when the approver acts | `test_policy_is_rechecked_at_approval_time` |
 | Mover keeps their old access | Changing department, role, manager or admin flag revokes open grants | `test_mover_access_is_revoked_and_admin_cannot_self_modify` |
+| A compromised IdP integration creating an administrator | SCIM ignores `is_admin`; an unknown or missing title gets the lowest clearance | `test_joiner_is_provisioned_and_can_request_access`, `test_joiner_defaults_fail_closed` |
 | Break-glass used as a bypass | Policy still applies. Capped at 1h, raises a high-severity alert, needs review, and is disabled for flagged requests | `test_break_glass_does_not_bypass_policy` |
 | Credentials broader than the grant | The session policy allows only the action's IAM actions on one ARN, intersected with the role's policy | `test_issue_scoped_credentials` |
 | Credentials outliving the grant | Session duration is at most the grant's remaining time, and none are issued with under 15 minutes left | `test_session_never_outlives_grant` |
@@ -107,6 +112,9 @@ Being explicit about these matters as much as the mitigations above.
   (`arn:aws:iam::*:role/aegis-jit-*`) with a permission boundary, and alert on its use.
 - **JWTs can't be revoked individually.** Short TTLs and the per-request `is_active` check
   limit the exposure. A leaked token for an active user is valid until it expires.
+- **The SCIM token is a static shared secret.** Anyone holding it can deactivate users (a
+  denial of service) or provision new low-clearance ones. Store it only in the IdP, rotate
+  it, and restrict `/scim/v2` to the IdP's egress IPs at the gateway.
 - **Injection detection is heuristic.** It is defense in depth, not the security boundary.
   The boundary is that the LLM never decides. A request that gets past detection still goes
   through Cedar with real attributes.

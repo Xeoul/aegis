@@ -25,6 +25,8 @@ How each part of the system works. For the overview, see the [README](../README.
 | `GET` | `/alerts` | auditor, security engineer, admin | Detection findings (`?status=`, `?severity=`) |
 | `POST` | `/alerts/{id}/resolve` | security engineer (not about themselves) | Close an alert (`{note, false_positive}`) |
 | `GET` | `/reports/access-review` | auditor, security engineer, admin | User access review with control checks (`?days=`, `?format=csv`) |
+| `GET` `POST` `PUT` `PATCH` `DELETE` | `/scim/v2/Users[/{id}]` | identity provider (SCIM token) | Joiner/mover/leaver provisioning; see [SCIM provisioning](#scim-provisioning) |
+| `GET` | `/scim/v2/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | identity provider (SCIM token) | SCIM discovery |
 
 All timestamps are UTC.
 
@@ -39,6 +41,34 @@ All timestamps are UTC.
   expiry checks). The dev token endpoint returns 404.
 - **Least privilege for administrators.** `is_admin` lets a user provision identities and read
   the audit trail. It grants no access to resources; admins go through the same request flow.
+
+## SCIM provisioning
+
+In a real company, people join, move and leave in the identity provider (Okta, Entra ID), not
+in each application. Aegis implements the SCIM 2.0 server side
+([RFC 7643](https://www.rfc-editor.org/rfc/rfc7643) / [RFC 7644](https://www.rfc-editor.org/rfc/rfc7644))
+at `/scim/v2`, so the IdP stays the source of truth ([`routers/scim.py`](../app/routers/scim.py)).
+
+- **A separate credential.** The IdP authenticates with `AEGIS_SCIM_TOKEN` (a bearer token
+  compared in constant time), not with a person's token. With the variable unset, SCIM is off
+  and every route returns 404.
+- **One lifecycle.** SCIM and `PATCH /users/{id}` both call
+  [`identity.apply_changes`](../app/identity.py). Setting `active: false` (Okta's
+  `{"op": "replace", "value": {"active": false}}` or Entra ID's
+  `{"op": "Replace", "path": "active", "value": "False"}`) revokes every grant, cancels
+  pending requests and denies live AWS sessions. Changing `title` (role), department or
+  manager is a mover event and revokes open access. A rename is not.
+- **Attribute mapping.** `userName` is the work email that tokens are matched on, `title` is
+  the Aegis role, and the enterprise extension carries `department` and `manager.value` (the
+  manager's SCIM id). `externalId` stores the IdP's own id. A missing title or department
+  falls back to `employee` / `Unassigned`, which gets the lowest clearance (fail closed).
+- **No admin over SCIM.** `is_admin` can't be set through SCIM; making someone an identity
+  administrator stays a deliberate action by an existing one.
+- **History is kept.** `DELETE` deactivates instead of erasing, so the audit trail still
+  resolves who did what. Changes are audited with no actor and the detail "via SCIM".
+- **Scope.** Users only (no Groups: Aegis decides on attributes, not group membership), and
+  equality filters on `userName`, `externalId` and `id`, which is what IdPs use to match
+  accounts before creating them. Attributes Aegis doesn't store are accepted and ignored.
 
 ## Grant lifecycle
 
@@ -220,6 +250,7 @@ SIEM copy can be checked against the source.
 | `AEGIS_BUSINESS_HOURS_UTC`, `AEGIS_BUSINESS_DAYS` | `07-19`, `0-4` (Mon–Fri) for the off-hours rule |
 | `AEGIS_DEMO_MODE` | `false` (`true`: sandbox banner, and data reset every `AEGIS_DEMO_RESET_MINUTES`, default 180) |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
+| `AEGIS_SCIM_TOKEN` | unset (SCIM disabled). Set a long random value and give it to the IdP to enable `/scim/v2` |
 
 ## Live demo
 

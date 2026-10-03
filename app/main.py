@@ -14,7 +14,7 @@ from app import credentials, llm_parser, siem
 from app import scheduler as scheduler_module
 from app.config import settings
 from app.database import init_db
-from app.routers import access, approvals, audit, auth, governance, users
+from app.routers import access, approvals, audit, auth, governance, scim, users
 from app.scheduler import create_scheduler
 
 logging.basicConfig(level=os.getenv("AEGIS_LOG_LEVEL", "INFO"))
@@ -97,8 +97,10 @@ def meta() -> dict[str, object]:
         "credential_broker": "aws" if credentials.enabled() else "none",
         "demo_reset_minutes": settings.demo_reset_minutes if settings.demo_mode else None,
         "next_reset_at": next_reset.isoformat() if next_reset else None,
+        "scim": bool(os.getenv("AEGIS_SCIM_TOKEN")),
     }
 
 
-for module in (auth, users, access, approvals, audit, governance):
+for module in (auth, users, access, approvals, audit, governance, scim):
     app.include_router(module.router)
+app.add_exception_handler(scim.ScimError, scim.error_response)

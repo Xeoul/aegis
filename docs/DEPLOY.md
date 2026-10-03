@@ -67,5 +67,7 @@ The demo settings are deliberate. A real deployment would differ like this:
   shipped to an append-only store.
 - The credential broker running as a dedicated IAM role scoped to `aegis-jit-*` roles.
 - Rate limiting at the gateway.
+- `AEGIS_SCIM_TOKEN` set and given to your IdP's provisioning app, so joiners, movers and
+  leavers flow in from Okta or Entra ID; `/scim/v2` reachable only from the IdP.
 
 The [threat model](THREAT_MODEL.md) covers the reasoning behind each of these.

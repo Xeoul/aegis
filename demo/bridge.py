@@ -38,6 +38,8 @@ os.environ.update(
     AEGIS_LOG_LEVEL="WARNING",
     # A fresh key per page load: the demo's audit chain is real, just short-lived.
     AEGIS_AUDIT_KEY=secrets.token_hex(32),
+    # The page's "identity provider" tab provisions people over SCIM with this token.
+    AEGIS_SCIM_TOKEN=secrets.token_hex(32),
 )
 
 # llm_parser imports the Anthropic SDK at the top of the module. It's never called in
@@ -203,6 +205,7 @@ def users() -> str:
                     role=u.role,
                     is_admin=u.is_admin,
                     manager=by_id[u.manager_id].name if u.manager_id in by_id else None,
+                    active=u.is_active,
                 )
                 for u in rows
             ]
@@ -256,6 +259,11 @@ async def call(method: str, path: str, token: str | None = None, body: str | Non
     except json.JSONDecodeError:
         payload = raw
     return json.dumps({"status": status, "body": payload})
+
+
+async def scim(method: str, path: str, body: str | None = None) -> str:
+    """A SCIM call as the identity provider would make it: with the provisioning token, not a user's."""
+    return await call(method, path, os.environ["AEGIS_SCIM_TOKEN"], body)
 
 
 def sweep() -> None:

@@ -75,6 +75,8 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # The identity provider's own id for this person, set by SCIM provisioning.
+    external_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
 
     requests: Mapped[list["AccessRequest"]] = relationship(back_populates="user", foreign_keys="AccessRequest.user_id")
     manager: Mapped["User | None"] = relationship(remote_side=[id], foreign_keys=[manager_id])

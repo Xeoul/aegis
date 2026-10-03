@@ -159,7 +159,7 @@ function nameOf(id) {
 }
 
 function describe(p) {
-    return [p.role, p.department, p.manager ? `reports to ${p.manager}` : null, p.is_admin ? 'identity admin' : null].filter(Boolean).join(' · ');
+    return [p.active === false ? 'deactivated' : null, p.role, p.department, p.manager ? `reports to ${p.manager}` : null, p.is_admin ? 'identity admin' : null].filter(Boolean).join(' · ');
 }
 
 function signInAs(email) {
@@ -256,6 +256,13 @@ function empty(text) {
     return h('p', { class: 'empty' }, text);
 }
 
+// After the identity provider offboards someone, Aegis refuses their token everywhere.
+function refused(view, res) {
+    if (res.status !== 403 || !current || current.active !== false) return false;
+    view.replaceChildren(empty(`${current.name} was offboarded in the identity provider, so Aegis refuses their sign-in. Re-enable them on the Identity provider tab, or pick someone else.`));
+    return true;
+}
+
 function inlineAction(label, placeholder, run, { danger = false } = {}) {
     const input = h('input', { type: 'text', value: placeholder, 'aria-label': `${label}: comment`, minlength: '3', maxlength: '1000' });
     const form = h('form', {
@@ -291,6 +298,7 @@ function requestRow(r, actions) {
 async function renderRequests() {
     const res = await api('GET', '/requests');
     const view = $('view-requests');
+    if (refused(view, res)) return;
     if (!res.body.length) return view.replaceChildren(empty('No requests yet. Submit one, or pick an example.'));
     view.replaceChildren(h('ul', { class: 'rows' }, res.body.map((r) => requestRow(r,
         r.status === 'ACTIVE' ? inlineAction('Revoke', 'No longer needed', (reason) => api('POST', `/grants/${r.id}/revoke`, { reason }), { danger: true }) : null))));
@@ -298,11 +306,12 @@ async function renderRequests() {
 
 async function renderApprovals() {
     const res = await api('GET', '/approvals');
-    const tasks = res.body;
+    const tasks = res.status === 200 ? res.body : [];
     const count = $('approvals-count');
     count.hidden = !tasks.length;
     count.textContent = String(tasks.length);
     const view = $('view-approvals');
+    if (refused(view, res)) return;
     if (!tasks.length) {
         return view.replaceChildren(empty('Nothing waiting for you. Requests for restricted resources, or to delete or administer anything, need a second person: the requester’s manager, a manager in the owning department, or a security engineer - never the requester.'));
     }
@@ -322,6 +331,7 @@ async function renderApprovals() {
 async function renderGrants() {
     const res = await api('GET', '/active-grants');
     const view = $('view-grants');
+    if (refused(view, res)) return;
     if (!res.body.length) return view.replaceChildren(empty('No active grants.'));
     const oversight = res.body.some((g) => g.user_id !== current.id);
     view.replaceChildren(
@@ -334,6 +344,7 @@ async function renderGrants() {
 }
 
 function oversightOnly(view, what, tab) {
+    if (refused(view, { status: 403 })) return;
     return view.replaceChildren(h('p', { class: 'empty' }, `Only auditors, security engineers and identity admins can see ${what}. `,
         h('button', { type: 'button', class: 'link', onclick: () => signInAs('grace.kim').then(() => selectTab(tab)) }, 'Sign in as Grace Kim, the auditor'), '.'));
 }
@@ -417,6 +428,7 @@ async function renderReview() {
 
 async function renderCatalog() {
     const res = await api('GET', '/resources');
+    if (refused($('view-catalog'), res)) return;
     $('view-catalog').replaceChildren(
         h('p', { class: 'hint' }, 'Decisions come from Cedar policies (policies/aegis.cedar), the policy language behind AWS Verified Permissions, running here as WebAssembly. Roles are cleared up to a sensitivity level (intern: public; analyst and contractor: internal; engineer, manager and auditor: confidential; SRE, senior engineer, security engineer and admin: restricted). Confidential and restricted resources with an owner stay within that department. Grants are capped at 72h, 24h, 8h and 2h by level.'),
         h('table', { class: 'catalog' },
@@ -424,9 +436,85 @@ async function renderCatalog() {
             h('tbody', null, res.body.map((r) => h('tr', null, h('td', null, r.name), h('td', null, h('span', { class: `level level-${r.sensitivity_level}` }, r.sensitivity_level)), h('td', null, r.owner_department || '-'))))));
 }
 
+// ---------------------------------------------------------------- identity provider (SCIM)
+
+// This tab stands in for the company's identity provider (Okta, Entra ID). It reaches Aegis
+// only through SCIM 2.0, with its own provisioning token, as a real IdP would.
+const ENTERPRISE = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
+const NEW_HIRE = { userName: 'jordan.reyes@aegis.example', name: { givenName: 'Jordan', familyName: 'Reyes' }, title: 'engineer', department: 'Engineering', manager: 'Maya Torres' };
+let lastScim = null;
+
+async function scimCall(method, path, body) {
+    const started = performance.now();
+    const res = JSON.parse(await bridge.scim(method, path, body === undefined ? null : JSON.stringify(body)));
+    logCall(method, path, res.status, Math.max(1, Math.round(performance.now() - started)));
+    if (method !== 'GET') lastScim = { method, path, body, status: res.status };
+    return res;
+}
+
+function loadPeople() {
+    people = JSON.parse(bridge.users());
+    $('user').replaceChildren(...people.map((p) => h('option', { value: p.email }, `${p.name} (${p.role}, ${p.department})${p.active ? '' : ' - deactivated'}`)));
+    if (current) current = people.find((p) => p.email === current.email) || current;
+    if (current) {
+        $('user').value = current.email;
+        $('who').textContent = describe(current);
+    }
+}
+
+async function provision(work, message) {
+    const res = await work();
+    if (res.status >= 400) toast(res.body.detail || `HTTP ${res.status}`);
+    else toast(message);
+    loadPeople();
+    await refresh();
+}
+
+async function renderDirectory() {
+    const res = await scimCall('GET', '/scim/v2/Users?count=200');
+    const users = res.body.Resources;
+    const managerId = (name) => users.find((u) => u.displayName === name)?.id;
+    const hired = users.some((u) => u.userName === NEW_HIRE.userName);
+    const hire = () => provision(() => scimCall('POST', '/scim/v2/Users', {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User', ENTERPRISE],
+        userName: NEW_HIRE.userName, name: NEW_HIRE.name, title: NEW_HIRE.title, active: true,
+        [ENTERPRISE]: { department: NEW_HIRE.department, manager: { value: managerId(NEW_HIRE.manager) } },
+    }), 'Jordan was provisioned over SCIM and can now sign in and request access.');
+    const setActive = (u, active) => provision(() => {
+        if (!active && current && u.userName === current.email) $('result').replaceChildren();
+        return scimCall('PATCH', `/scim/v2/Users/${u.id}`, {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+            Operations: [{ op: 'replace', value: { active } }],
+        });
+    }, active
+        ? `${u.displayName} was re-enabled. Their old grants stay revoked; they ask again.`
+        : `${u.displayName} was deprovisioned. Aegis revoked their grants and cancelled pending requests.`);
+
+    $('view-directory').replaceChildren(
+        h('p', { class: 'hint' }, 'This tab plays your identity provider (Okta, Entra ID). It talks to Aegis only through SCIM 2.0 at /scim/v2, with its own provisioning token, never a person’s. Joiners, movers and leavers in the IdP go through the same lifecycle code as the admin API, so offboarding someone here revokes their access in Aegis at once - including live AWS sessions on the server.'),
+        h('div', { class: 'audit-tools' },
+            h('button', { type: 'button', class: 'secondary', disabled: hired, onclick: () => busy(hire) },
+                hired ? 'Jordan Reyes is provisioned' : 'Hire Jordan Reyes (engineer, reports to Maya)')),
+        lastScim ? h('details', { class: 'scim-last' },
+            h('summary', null, `Last SCIM call: ${lastScim.method} ${lastScim.path} → ${lastScim.status}`),
+            h('pre', null, JSON.stringify(lastScim.body ?? null, null, 2))) : null,
+        h('div', { class: 'table-scroll' }, h('table', { class: 'catalog' },
+            h('thead', null, h('tr', null, ['Person', 'Title', 'Department', 'Status', ''].map((x) => h('th', { scope: 'col' }, x)))),
+            h('tbody', null, users.map((u) => h('tr', null,
+                h('td', null, u.displayName, h('br'), h('span', { class: 'muted' }, u.userName)),
+                h('td', null, u.title),
+                h('td', null, u[ENTERPRISE].department),
+                h('td', null, badge(u.active ? 'active' : 'deactivated')),
+                h('td', null, h('button', {
+                    type: 'button', class: u.active ? 'danger' : 'secondary',
+                    onclick: () => busy(() => setActive(u, !u.active)),
+                }, u.active ? 'Offboard' : 'Re-enable'))))))));
+}
+
 const RENDERERS = {
     'tab-requests': renderRequests, 'tab-approvals': renderApprovals, 'tab-grants': renderGrants,
     'tab-alerts': renderAlerts, 'tab-review': renderReview, 'tab-audit': renderAudit, 'tab-catalog': renderCatalog,
+    'tab-directory': renderDirectory,
 };
 let activeTab = 'tab-requests';
 
@@ -502,9 +590,8 @@ async function boot() {
 
     bootStep('Seeding people and resources…');
     bridge = py.pyimport('bridge');
-    people = JSON.parse(bridge.users());
+    loadPeople();
 
-    $('user').replaceChildren(...people.map((p) => h('option', { value: p.email }, `${p.name} (${p.role}, ${p.department})`)));
     $('user').addEventListener('change', (e) => signInAs(e.target.value));
     $('request-form').addEventListener('submit', submitRequest);
     $('advance').addEventListener('click', () => busy(async () => {
@@ -515,6 +602,8 @@ async function boot() {
     $('reset').addEventListener('click', () => busy(async () => {
         bridge.reset();
         tokens.clear();
+        lastScim = null;
+        loadPeople();
         $('result').replaceChildren();
         $('request-text').value = '';
         $('break-glass').checked = false;
