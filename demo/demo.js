@@ -510,11 +510,14 @@ async function renderReview() {
 async function renderCatalog() {
     const res = await api('GET', '/resources');
     if (refused($('view-catalog'), res)) return;
+    const whatIf = h('div', { class: 'what-if' });
     $('view-catalog').replaceChildren(
         h('p', { class: 'hint' }, 'Decisions come from Cedar policies (policies/aegis.cedar), the policy language behind AWS Verified Permissions, running here as WebAssembly. Roles are cleared up to a sensitivity level (intern: public; analyst and contractor: internal; engineer, manager and auditor: confidential; SRE, senior engineer, security engineer and admin: restricted). Confidential and restricted resources with an owner stay within that department. Grants are capped at 72h, 24h, 8h and 2h by level.'),
         h('table', { class: 'catalog' },
             h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Resource'), h('th', { scope: 'col' }, 'Sensitivity'), h('th', { scope: 'col' }, 'Owner'))),
-            h('tbody', null, res.body.map((r) => h('tr', null, h('td', null, r.name), h('td', null, h('span', { class: `level level-${r.sensitivity_level}` }, r.sensitivity_level)), h('td', null, r.owner_department || '-'))))));
+            h('tbody', null, res.body.map((r) => h('tr', null, h('td', null, r.name), h('td', null, h('span', { class: `level level-${r.sensitivity_level}` }, r.sensitivity_level)), h('td', null, r.owner_department || '-'))))),
+        whatIf);
+    await renderWhatIf(whatIf, res.body);
 }
 
 // ---------------------------------------------------------------- identity provider (SCIM)
@@ -590,6 +593,62 @@ async function renderDirectory() {
                     type: 'button', class: u.active ? 'danger' : 'secondary',
                     onclick: () => busy(() => setActive(u, !u.active)),
                 }, u.active ? 'Offboard' : 'Re-enable'))))))));
+}
+
+// What-if: ask the real policy engine about a person and resource, optionally changed
+// ("what if Alice moved to Finance?"), without granting or storing anything.
+async function renderWhatIf(box, resources) {
+    const suite = await api('GET', '/policy/tests');
+    if (suite.status === 403) {
+        return box.replaceChildren(h('h3', null, 'What if…?'), h('p', { class: 'empty' }, 'Auditors and security engineers can ask the policy engine what-if questions here. ',
+            h('button', { type: 'button', class: 'link', onclick: () => signInAs('grace.kim').then(() => selectTab('tab-catalog')) }, 'Sign in as Grace Kim, the auditor'), '.'));
+    }
+    const s = suite.body;
+    const select = (id, label, options, value) => h('label', { class: 'wi-field' }, h('span', { class: 'field-label' }, label),
+        h('select', { id }, options.map(([v, text]) => h('option', { value: v, selected: v === value ? 'selected' : null }, text))));
+    const keep = [['', '(as is)']];
+    const roles = ['intern', 'contractor', 'analyst', 'engineer', 'manager', 'auditor', 'senior engineer', 'sre', 'security engineer'];
+    const departments = ['Engineering', 'Finance', 'Marketing', 'Security', 'Compliance', 'IT'];
+    const toggle = (id, label, checked) => h('label', { class: 'check wi-check' }, h('input', { type: 'checkbox', id, checked: checked ? 'checked' : null }), h('span', null, label));
+    const answer = h('div', { class: 'wi-answer', 'aria-live': 'polite' });
+    const form = h('form', { class: 'wi-form', onsubmit: (e) => {
+        e.preventDefault();
+        busy(async () => {
+            const v = (id) => $(id).value;
+            const body = {
+                user_id: Number(v('wi-user')), resource: v('wi-resource'), action: v('wi-action'), duration_hours: 4,
+                mfa: $('wi-mfa').checked, approved: $('wi-approved').checked, break_glass: $('wi-glass').checked,
+            };
+            if (v('wi-role')) body.role = v('wi-role');
+            if (v('wi-dept')) body.department = v('wi-dept');
+            if (v('wi-level')) body.sensitivity = v('wi-level');
+            const r = await api('POST', '/policy/simulate', body);
+            if (r.status !== 200) return answer.replaceChildren(h('p', { class: 'empty' }, detail(r)));
+            const o = r.body;
+            const tone = { allow: 'allow', 'needs-approval': 'pending_approval', 'step-up': 'pending_approval', deny: 'denied' }[o.outcome];
+            answer.replaceChildren(
+                h('div', { class: 'row-head' }, h('span', { class: `badge badge-${tone}` }, o.outcome), h('span', { class: 'muted' }, `${o.role} · ${o.department} → ${body.resource} (${o.sensitivity}) · ${o.decision === 'ALLOW' ? `${o.granted_duration_hours}h max` : 'nothing granted'}`)),
+                h('ul', { class: 'reasons' }, o.reasons.map(reasonItem)),
+                h('p', { class: 'meta' }, 'Nothing was granted or changed. The question itself went into the audit trail.'));
+        });
+    } },
+        h('div', { class: 'wi-grid' },
+            select('wi-user', 'Person', people.map((p) => [String(p.id), p.name]), String(people[0].id)),
+            select('wi-action', 'Action', ['read', 'write', 'delete', 'admin'].map((a) => [a, a]), 'read'),
+            select('wi-resource', 'Resource', resources.map((r) => [r.name, r.name]), 'prod-db'),
+            select('wi-role', 'What if their role were', [...keep, ...roles.map((r) => [r, r])], ''),
+            select('wi-dept', 'What if they moved to', [...keep, ...departments.map((d) => [d, d])], ''),
+            select('wi-level', 'What if it were reclassified as', [...keep, ...['public', 'internal', 'confidential', 'restricted'].map((l) => [l, l])], '')),
+        h('div', { class: 'wi-toggles' }, toggle('wi-mfa', 'Recent MFA', true), toggle('wi-approved', 'Already approved', false), toggle('wi-glass', 'Break-glass', false)),
+        h('button', { type: 'submit', class: 'secondary' }, 'Ask the policy engine'));
+    box.replaceChildren(
+        h('h3', null, 'What if…?'),
+        h('p', { class: 'hint' }, 'Ask the same Cedar policies what they would decide, for a real person and resource or a changed one: a mover, a reclassified resource, a request without MFA.'),
+        form, answer,
+        h('details', { class: 'wi-tests' },
+            h('summary', null, `Policy test suite: ${s.passed}/${s.passed + s.failed} cases pass`),
+            h('p', { class: 'hint' }, 'policies/tests.json pins what each guardrail must decide. CI runs it against the server’s Cedar, and against this WebAssembly build.'),
+            h('ul', { class: 'wi-cases' }, s.cases.map((c) => h('li', null, h('span', { class: c.passed ? 'ok' : 'err' }, c.passed ? '✓' : '✗'), ' ', c.name, ' ', h('span', { class: 'muted' }, `→ ${c.actual}`))))));
 }
 
 const RENDERERS = {

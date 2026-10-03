@@ -63,6 +63,10 @@ const alerts = (await call("GET", "/alerts", grace)).body.map((a) => a.rule);
 assert.ok(alerts.includes("prompt-injection") && alerts.includes("privilege-escalation-attempt"), alerts.join());
 const review = (await call("GET", "/reports/access-review", grace)).body.control_checks;
 assert.deepEqual(review, { self_approvals: 0, active_grants_for_inactive_users: 0, unreviewed_break_glass: 0, audit_chain_valid: true });
+// The policy test suite, under Cedar's WebAssembly build this time.
+const suite = (await call("GET", "/policy/tests", grace)).body;
+assert.equal(suite.failed, 0, JSON.stringify(suite.cases.filter((c) => !c.passed)));
+console.log(`policy tests under cedar-wasm: ${suite.passed}/${suite.passed + suite.failed}`);
 console.log(`demo smoke ok: cedar ${cedar.getCedarVersion()}, ${alerts.length} alerts, chain intact`);
 
 // SCIM: the identity provider deprovisions Alice, and her grant is revoked at once.

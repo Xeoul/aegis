@@ -53,6 +53,7 @@ class AuditEvent(str, enum.Enum):
     MFA_FAILED = "MFA_FAILED"
     MFA_RESET = "MFA_RESET"
     STEP_UP_REQUIRED = "STEP_UP_REQUIRED"
+    POLICY_SIMULATED = "POLICY_SIMULATED"
 
 
 class AlertSeverity(str, enum.Enum):

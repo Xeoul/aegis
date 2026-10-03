@@ -343,3 +343,19 @@ button:disabled { cursor: progress; opacity: 0.6; }
   .spinner { animation-duration: 2.4s; }
   .toast { transition: none; }
 }
+
+/* What-if simulation (Policy tab) */
+.what-if { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.what-if h3 { margin: 0 0 6px; font-size: 16px; }
+.wi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 12px; }
+.wi-field { display: grid; gap: 4px; }
+.wi-field .field-label { margin: 0; }
+.wi-toggles { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0; }
+.wi-check { margin: 0; }
+.wi-answer:empty { display: none; }
+.wi-answer { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.wi-tests { margin-top: 18px; font-size: 14px; }
+.wi-tests summary { cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+.wi-cases { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; }
+.wi-cases .ok { color: var(--allow); }
+.wi-cases .err { color: var(--deny); }

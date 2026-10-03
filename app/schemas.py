@@ -293,3 +293,53 @@ class AccessReviewReport(BaseModel):
     period_days: int
     control_checks: ControlChecks
     users: list[UserAccessReview]
+
+
+# --- Policy simulation ---------------------------------------------------------------
+
+
+class SimulateIn(BaseModel):
+    """A what-if question for the policy engine. Nothing is granted or recorded as a request.
+
+    Leave the overrides empty to ask about the person and resource as they are; set them to ask
+    "what if": what if Alice moved to Finance, what if prod-db were reclassified as restricted.
+    """
+
+    user_id: int
+    resource: str = Field(min_length=1, max_length=120)
+    action: Action
+    duration_hours: int = Field(1, ge=1, le=720)
+    justification: str = Field("What-if simulation", max_length=500)
+    mfa: bool = True
+    approved: bool = False
+    break_glass: bool = False
+    role: str | None = Field(None, min_length=1, max_length=80)
+    department: str | None = Field(None, min_length=1, max_length=80)
+    sensitivity: SensitivityLevel | None = None
+
+
+class SimulateOut(BaseModel):
+    outcome: Literal["allow", "needs-approval", "step-up", "deny"]
+    decision: Decision
+    reasons: list[str]
+    policy_ids: list[str]
+    granted_duration_hours: int
+    role: str
+    department: str
+    sensitivity: SensitivityLevel
+    owner_department: str | None
+
+
+class PolicyTestOut(BaseModel):
+    name: str
+    passed: bool
+    expected: str
+    actual: str
+    because: list[str] | None
+    policies: list[str]
+
+
+class PolicyTestsOut(BaseModel):
+    passed: int
+    failed: int
+    cases: list[PolicyTestOut]
