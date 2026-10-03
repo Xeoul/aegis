@@ -23,6 +23,8 @@ class Settings:
     oidc_issuer: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_ISSUER", ""))
     oidc_audience: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_AUDIENCE", "aegis-jit"))
     oidc_jwks_url: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_JWKS_URL", ""))
+    # The dashboard's public client at the IdP (authorization code flow with PKCE).
+    oidc_client_id: str = field(default_factory=lambda: os.getenv("AEGIS_OIDC_CLIENT_ID", "aegis-jit"))
     # IdP "acr" values that count as multi-factor (amr values such as "mfa" or "otp" always do).
     oidc_mfa_acr: tuple[str, ...] = field(
         default_factory=lambda: tuple(v.strip() for v in os.getenv("AEGIS_OIDC_MFA_ACR", "").split(",") if v.strip())

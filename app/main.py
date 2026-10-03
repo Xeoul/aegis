@@ -5,6 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -52,10 +53,20 @@ app = FastAPI(
 
 # The dashboard loads only same-origin files, so it can run under a strict CSP. Swagger UI at
 # /docs pulls assets from a CDN, so the CSP is scoped to /ui.
-UI_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-)
+def _ui_csp() -> str:
+    # In oidc mode the dashboard talks to the IdP directly (discovery and the PKCE token
+    # exchange), so its origin is the one addition to connect-src.
+    connect = "'self'"
+    if settings.auth_mode == "oidc":
+        issuer = urlsplit(settings.oidc_issuer)
+        connect += f" {issuer.scheme}://{issuer.netloc}"
+    return (
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        f"connect-src {connect}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    )
+
+
+UI_CSP = _ui_csp()
 
 
 @app.middleware("http")
@@ -98,6 +109,9 @@ def meta() -> dict[str, object]:
         "demo_reset_minutes": settings.demo_reset_minutes if settings.demo_mode else None,
         "next_reset_at": next_reset.isoformat() if next_reset else None,
         "scim": bool(os.getenv("AEGIS_SCIM_TOKEN")),
+        "oidc": {"issuer": settings.oidc_issuer, "client_id": settings.oidc_client_id}
+        if settings.auth_mode == "oidc"
+        else None,
     }
 
 

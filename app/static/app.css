@@ -215,3 +215,4 @@ dialog.stepup .enroll { margin: 0 0 14px; padding: 12px; border: 1px solid var(-
 dialog.stepup .enroll code { display: block; margin-bottom: 8px; font-family: var(--mono); font-size: 15px; overflow-wrap: anywhere; }
 dialog.stepup .enroll .muted { margin: 0; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 dialog.stepup .row { display: flex; gap: 8px; }
+.sso { width: 100%; padding: 13px 16px; margin-top: 8px; font-size: 15px; }

@@ -18,6 +18,26 @@ def test_demo_mode_reports_next_reset(client, monkeypatch):
     assert body["demo_mode"] is True and body["next_reset_at"].startswith("2026-01-01T03:00")
 
 
+def test_oidc_mode_publishes_client_settings_and_widens_csp(client, monkeypatch):
+    import dataclasses
+
+    import app.main as main
+    from app.config import settings
+
+    oidc = dataclasses.replace(
+        settings,
+        auth_mode="oidc",
+        oidc_issuer="https://idp.example:8443/realms/aegis",
+        oidc_jwks_url="https://idp.example:8443/realms/aegis/protocol/openid-connect/certs",
+    )
+    monkeypatch.setattr(main, "settings", oidc)
+    body = client.get("/meta").json()
+    assert body["oidc"] == {"issuer": "https://idp.example:8443/realms/aegis", "client_id": "aegis-jit"}
+    assert "connect-src 'self' https://idp.example:8443;" in main._ui_csp()
+    monkeypatch.setattr(main, "settings", settings)
+    assert "connect-src 'self';" in main._ui_csp() and client.get("/meta").json()["oidc"] is None
+
+
 def test_demo_reset_wipes_activity(client, auth):
     from conftest import ALICE, GRACE
 

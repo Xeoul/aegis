@@ -27,7 +27,7 @@ exact code, including the Cedar policy engine, in your browser. See [how the dem
 | **SCIM 2.0 provisioning** | Okta / Entra ID drive the user lifecycle over [`/scim/v2`](docs/DESIGN.md#scim-provisioning); offboarding in the IdP revokes access at once |
 | **Break-glass** | Emergency access capped at 1h, alerted, and reviewed afterwards |
 | **MFA step-up** | Restricted access, break-glass and approvals need a recent second factor ([RFC 9470](docs/DESIGN.md#mfa-step-up)); IdP `amr`/`acr` or built-in TOTP |
-| **Federated identity** | OIDC/JWKS token validation (RS256/ES256), identity taken only from the token |
+| **Federated identity** | OIDC/JWKS token validation (RS256/ES256), PKCE sign-in, and a [Keycloak realm](deploy/keycloak) exercised end to end in CI |
 | **Tamper-evident audit** | HMAC hash-chained log with a verify endpoint |
 | **Detection and response** | 6 detection rules, alert triage, OCSF-style SIEM export |
 | **Access certification** | Access review report with control-effectiveness checks (JSON/CSV) |
@@ -74,6 +74,13 @@ With Docker:
 
 ```bash
 docker compose up aegis           # http://localhost:8000 (dashboard); API docs at /docs
+```
+
+With a real identity provider (Keycloak, password + TOTP), see
+[DEPLOY.md](docs/DEPLOY.md#optional-sign-in-through-a-real-identity-provider-keycloak):
+
+```bash
+docker compose --profile oidc up  # http://localhost:8001
 ```
 
 Or locally (Python 3.11+):
@@ -142,8 +149,9 @@ app/
   routers/         HTTP endpoints
   static/          Dashboard (vanilla JS, strict CSP)
 policies/          Cedar schema, policies, role attributes
-scripts/           LocalStack bootstrap
-tests/             144 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+scripts/           LocalStack bootstrap, Keycloak end-to-end check
+deploy/keycloak/   Keycloak realm: demo people, PKCE client, password + TOTP flow
+tests/             145 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

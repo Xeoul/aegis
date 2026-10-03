@@ -48,6 +48,7 @@ threat is mitigated, and what is *not* mitigated.
 | TOTP code replay or guessing | Single-use time steps, ±1 step drift only, lockout and a high-severity alert after 5 wrong codes | `test_codes_cannot_be_replayed`, `test_brute_force_locks_and_alerts_then_admin_resets` |
 | An attacker with a session swapping in their own authenticator | Re-enrolling a confirmed authenticator needs a fresh MFA token | `test_replacing_an_authenticator_needs_the_current_one` |
 | Calling SCIM as a user, or without the IdP's token | SCIM accepts only `AEGIS_SCIM_TOKEN` (constant-time compare); user JWTs are refused, and SCIM is off when the variable is unset | `test_rejects_missing_or_wrong_token`, `test_disabled_without_a_token` |
+| Authorization code interception in the browser login | Public client with PKCE (S256), `state` checked, exact redirect URIs registered at the IdP | `scripts/oidc_e2e.py` (CI `oidc` job) |
 | Dev token endpoint used in production | Only enabled when `AEGIS_AUTH_MODE=dev`, with a warning at startup. In OIDC mode it returns 404 | `test_dev_token_disabled_in_oidc_mode` |
 
 ### Tampering
@@ -113,6 +114,9 @@ Being explicit about these matters as much as the mitigations above.
 - **Aegis's AWS principal is highly privileged.** It needs `sts:AssumeRole` and
   `iam:PutRolePolicy` on the brokered roles. Scope it to a role-name prefix
   (`arn:aws:iam::*:role/aegis-jit-*`) with a permission boundary, and alert on its use.
+- **The dashboard keeps its access token in `sessionStorage`**, which script running in the
+  page could read. The strict CSP (`script-src 'self'`, no inline script) is the
+  mitigation; a backend-for-frontend with an HttpOnly cookie would remove the exposure.
 - **JWTs can't be revoked individually.** Short TTLs and the per-request `is_active` check
   limit the exposure. A leaked token for an active user is valid until it expires.
 - **The SCIM token is a static shared secret.** Anyone holding it can deactivate users (a

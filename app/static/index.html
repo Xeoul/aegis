@@ -18,8 +18,9 @@
         <input id="login-email" type="email" placeholder="or enter an email" required aria-label="Email">
         <button type="submit" class="ghost">Continue →</button>
       </form>
+      <button id="login-sso" type="button" class="primary sso" hidden>Sign in with your identity provider →</button>
       <p id="login-error" class="error" role="alert"></p>
-      <p class="fine">Development identity provider. With <code>AEGIS_AUTH_MODE=oidc</code>, tokens come from your IdP.</p>
+      <p id="login-fine" class="fine">Development identity provider. With <code>AEGIS_AUTH_MODE=oidc</code>, tokens come from your IdP.</p>
     </div>
   </section>
 

@@ -57,6 +57,29 @@ pip install -r requirements.txt && python seed_data.py && uvicorn app.main:app -
 Static hosts such as GitHub Pages or Netlify's static hosting **won't** work, because the app
 needs a Python server.
 
+## Optional: sign in through a real identity provider (Keycloak)
+
+To show OIDC end to end on your machine:
+
+```bash
+docker compose --profile oidc up
+```
+
+This starts Keycloak on port 8080 with the demo realm
+([`deploy/keycloak/aegis-realm.json`](../deploy/keycloak/aegis-realm.json)) and Aegis in
+`oidc` mode on **http://localhost:8001**. Click *Sign in with your identity provider* and use
+any demo person's username, for example `bob.martinez`, with the password `aegis-demo`.
+Keycloak then asks for a one-time code. Every demo person shares this authenticator key, so
+add it to any authenticator app once:
+
+```
+MFSWO2LTFVSGK3LPFV2G65DQFVVWK6JB
+```
+
+The realm is for local demos only: the passwords, the authenticator key and the Keycloak admin
+login (`admin` / `admin`) are all public. The same flow runs in CI on every push (the `oidc`
+job).
+
 ## Moving from demo to production
 
 The demo settings are deliberate. A real deployment would differ like this:
