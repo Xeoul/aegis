@@ -394,17 +394,25 @@ async function renderApprovals() {
     const view = $('view-approvals');
     if (refused(view, res)) return;
     if (!tasks.length) {
-        return view.replaceChildren(empty('Nothing waiting for you. Requests for restricted resources, or to delete or administer anything, need a second person: the requester’s manager, a manager in the owning department, or a security engineer - never the requester.'));
+        return view.replaceChildren(empty('Nothing waiting for you. Requests for restricted resources, or to delete or administer anything, need a second person: the requester’s manager, a manager in the owning department, or a security engineer - never the requester. The same people recertify active grants when an auditor starts a campaign.'));
     }
     view.replaceChildren(h('ul', { class: 'rows' }, tasks.map((t) => {
         const r = t.request;
+        const c = t.certification;
         const actions = t.kind === 'approval'
             ? h('div', { class: 'actions' },
                 inlineAction('Approve', 'Approved for this change', (comment) => withStepUp(() => api('POST', `/requests/${r.id}/approve`, { comment }))),
                 inlineAction('Reject', 'Not justified', (comment) => api('POST', `/requests/${r.id}/reject`, { comment }), { danger: true }))
-            : inlineAction('Mark reviewed', 'Reviewed after the incident', (comment) => api('POST', `/requests/${r.id}/review`, { comment }));
+            : t.kind === 'certification'
+                ? h('div', { class: 'actions' },
+                    inlineAction('Certify', 'Still needed for this work', (comment) => api('POST', `/certifications/items/${c.item_id}/certify`, { comment })),
+                    inlineAction('Revoke', 'No longer needed', (comment) => api('POST', `/certifications/items/${c.item_id}/revoke`, { comment }), { danger: true }))
+                : inlineAction('Mark reviewed', 'Reviewed after the incident', (comment) => api('POST', `/requests/${r.id}/review`, { comment }));
         const row = requestRow(r, actions);
-        row.querySelector('.row-head').after(h('p', { class: 'meta' }, `${t.kind === 'approval' ? 'Requested' : 'Break-glass used'} by ${nameOf(r.user_id)}. ${t.eligibility}`));
+        const lead = t.kind === 'approval' ? `Requested by ${nameOf(r.user_id)}.`
+            : t.kind === 'certification' ? `Recertification “${c.campaign}”: does ${nameOf(r.user_id)} still need this? Unreviewed access is revoked ${relative(c.due_at)}.`
+                : `Break-glass used by ${nameOf(r.user_id)}.`;
+        row.querySelector('.row-head').after(h('p', { class: 'meta' }, `${lead} ${t.eligibility}`));
         return row;
     })));
 }
@@ -490,6 +498,20 @@ async function renderReview() {
     const r = res.body;
     const c = r.control_checks;
     const kpi = (value, label, bad) => h('div', { class: `kpi${bad ? ' kpi-bad' : ''}` }, h('span', { class: 'kpi-value' }, String(value)), h('span', { class: 'kpi-label' }, label));
+    const campaigns = (await api('GET', '/certifications')).body;
+    const startCampaign = () => busy(async () => {
+        const r = await api('POST', '/certifications', { name: 'Quarterly access recertification', due_in_hours: 2 });
+        if (r.status !== 201) return toast(detail(r));
+        toast(`${r.body.counts.total} active grants sent to their reviewers. Anything not certified in 2 hours is revoked.`);
+        await refresh();
+    });
+    const recert = h('div', { class: 'recert' },
+        h('h3', null, 'Recertification'),
+        h('p', { class: 'hint' }, 'Ask the people who could approve each active grant (the manager, the owning department’s manager, or security, never the holder) to confirm it’s still needed. Whatever isn’t certified by the deadline is revoked: fail closed.'),
+        h('button', { type: 'button', class: 'secondary', onclick: startCampaign }, 'Start a recertification campaign'),
+        campaigns.length ? h('ul', { class: 'rows' }, campaigns.map((cp) => h('li', { class: 'row' },
+            h('div', { class: 'row-head' }, h('strong', null, cp.name), h('span', { class: `badge ${cp.status === 'OPEN' ? 'badge-pending_approval' : 'badge-closed'}` }, cp.status.toLowerCase()), h('span', { class: 'muted right' }, `#${cp.id}`)),
+            h('p', { class: 'meta' }, `${cp.counts.certified} certified · ${cp.counts.revoked} revoked · ${cp.counts.pending} waiting · ${cp.counts.ended} ended early · ${cp.status === 'OPEN' ? `due ${relative(cp.due_at)}` : 'closed'}`)))) : null);
     view.replaceChildren(
         h('p', { class: 'hint' }, 'Periodic access certification, as SOX, SOC 2 and ISO 27001 require. The control checks are evidence that the preventive controls held: they should all be zero and the chain intact.'),
         h('div', { class: 'kpis' },
@@ -504,7 +526,8 @@ async function renderReview() {
                 h('td', null, u.active_grants.join(', ') || '-'),
                 h('td', null, String(u.denied_in_period)),
                 h('td', null, String(u.open_alerts)),
-                h('td', null, u.recommendation)))))));
+                h('td', null, u.recommendation)))))),
+        recert);
 }
 
 async function renderCatalog() {

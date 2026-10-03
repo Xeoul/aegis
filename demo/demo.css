@@ -359,3 +359,7 @@ button:disabled { cursor: progress; opacity: 0.6; }
 .wi-cases { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; }
 .wi-cases .ok { color: var(--allow); }
 .wi-cases .err { color: var(--deny); }
+
+.recert { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.recert h3 { margin: 0 0 6px; font-size: 16px; }
+.recert .rows { margin-top: 12px; }

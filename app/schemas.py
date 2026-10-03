@@ -5,7 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AlertSeverity, AlertStatus, AuditEvent, RequestStatus, SensitivityLevel
+from app.models import (
+    AlertSeverity,
+    AlertStatus,
+    AuditEvent,
+    CampaignStatus,
+    CertificationDecision,
+    RequestStatus,
+    SensitivityLevel,
+)
 
 Action = Literal["read", "write", "delete", "admin"]
 Decision = Literal["ALLOW", "DENY"]
@@ -207,10 +215,18 @@ class RevokeIn(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
 
+class CertificationTaskOut(BaseModel):
+    item_id: int
+    campaign_id: int
+    campaign: str
+    due_at: datetime
+
+
 class ApprovalTaskOut(BaseModel):
-    kind: Literal["approval", "break_glass_review"]
+    kind: Literal["approval", "break_glass_review", "certification"]
     eligibility: str
     request: RequestOut
+    certification: CertificationTaskOut | None = None
 
 
 class AuditLogOut(BaseModel):
@@ -343,3 +359,37 @@ class PolicyTestsOut(BaseModel):
     passed: int
     failed: int
     cases: list[PolicyTestOut]
+
+
+# --- Access recertification -------------------------------------------------------------
+
+
+class CampaignIn(BaseModel):
+    name: str = Field(min_length=3, max_length=120, examples=["Q3 access recertification"])
+    due_in_hours: int = Field(24, ge=1, le=720)
+
+
+class CertificationItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    decision: CertificationDecision
+    decided_by_id: int | None
+    decided_at: datetime | None
+    comment: str | None
+    request: RequestOut
+
+
+class CampaignOut(BaseModel):
+    id: int
+    name: str
+    status: CampaignStatus
+    created_by_id: int
+    created_at: datetime
+    due_at: datetime
+    closed_at: datetime | None
+    counts: dict[str, int]
+
+
+class CampaignDetailOut(CampaignOut):
+    items: list[CertificationItemOut]
