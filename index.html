@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Live demo of Aegis-JIT: ask for temporary access in plain English and watch the real Cedar policy engine decide, route approvals, expire grants and keep a tamper-evident audit trail - running in your browser.">
+    <!-- Pyodide (Python compiled to WebAssembly) comes from jsDelivr; everything else,
+         including the Aegis source and its Python packages, is served from this site. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none';">
+    <meta name="color-scheme" content="light dark">
+    <title>Aegis-JIT live demo</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234f46e5' d='M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Z'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="demo.css">
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js" integrity="sha384-90so5tCKvl0xs9agU29IMKlAVzhfzFX7QO//YxQkRhJG58bBZrFN+2ZTRB026X5X" crossorigin="anonymous" defer></script>
+    <script src="demo.js" defer></script>
+</head>
+<body>
+    <header class="top">
+        <div class="brand">
+            <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Z"/></svg>
+            <h1>Aegis<span>-JIT</span></h1>
+            <span class="tag">Live demo</span>
+        </div>
+        <nav class="top-links" aria-label="About this project">
+            <a href="https://xeoul.github.io/projects/aegis/">Case study</a>
+            <a href="https://github.com/Xeoul/aegis">Code <span aria-hidden="true">&nearr;</span></a>
+        </nav>
+    </header>
+
+    <div class="intro">
+        <p class="lede">Ask for temporary access in plain English. Aegis turns the request into a policy, decides it, sends risky access for a second person's approval, revokes grants when they expire, and records every step in a tamper-evident audit trail.</p>
+        <p class="note">This is the real Aegis API (FastAPI, SQLAlchemy and SQLite) running in your browser as Python compiled to WebAssembly. Everyone in it is fictional, nothing leaves this page, and it starts over when you reload. Decisions come from the real Cedar policy engine, compiled to WebAssembly. Requests are read by Aegis's offline keyword parser here; the server version uses Claude.</p>
+    </div>
+
+    <div id="boot" class="boot" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="boot-step">Loading Python&hellip;</span>
+        <span class="boot-hint">About 20 MB the first time, cached after that.</span>
+    </div>
+
+    <main id="app" hidden>
+        <section class="panel" aria-labelledby="request-heading">
+            <h2 id="request-heading">Request access</h2>
+
+            <label class="field-label" for="user">Signed in as</label>
+            <select id="user"></select>
+            <p id="who" class="who"></p>
+
+            <form id="request-form">
+                <label class="field-label" for="request-text">What do you need, and why?</label>
+                <textarea id="request-text" rows="3" minlength="5" maxlength="2000" required placeholder="e.g. read access to prod-db for 4 hours to debug a failing migration"></textarea>
+                <label class="check">
+                    <input type="checkbox" id="break-glass">
+                    <span><strong>Break-glass.</strong> Emergency access that skips approval: capped at 1 hour and reviewed afterwards. The policy still applies.</span>
+                </label>
+                <button type="submit" class="primary">Submit request</button>
+            </form>
+
+            <div id="result" aria-live="polite"></div>
+
+            <div class="examples">
+                <p class="field-label" id="examples-label">Or try one of these</p>
+                <ul id="examples" aria-labelledby="examples-label"></ul>
+            </div>
+
+        </section>
+
+        <section class="panel" aria-label="Requests, approvals, grants, audit trail and identity provider">
+            <div class="tabs" role="tablist" aria-label="Views">
+                <button role="tab" id="tab-requests" aria-controls="view-requests" aria-selected="true">My requests</button>
+                <button role="tab" id="tab-approvals" aria-controls="view-approvals" aria-selected="false" tabindex="-1">Approvals <span class="count" id="approvals-count" hidden></span></button>
+                <button role="tab" id="tab-grants" aria-controls="view-grants" aria-selected="false" tabindex="-1">Active grants</button>
+                <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" tabindex="-1">Alerts</button>
+                <button role="tab" id="tab-review" aria-controls="view-review" aria-selected="false" tabindex="-1">Access review</button>
+                <button role="tab" id="tab-audit" aria-controls="view-audit" aria-selected="false" tabindex="-1">Audit trail</button>
+                <button role="tab" id="tab-catalog" aria-controls="view-catalog" aria-selected="false" tabindex="-1">Policy</button>
+                <button role="tab" id="tab-directory" aria-controls="view-directory" aria-selected="false" tabindex="-1">Identity provider</button>
+            </div>
+            <div role="tabpanel" id="view-requests" aria-labelledby="tab-requests" tabindex="0"></div>
+            <div role="tabpanel" id="view-approvals" aria-labelledby="tab-approvals" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-grants" aria-labelledby="tab-grants" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-alerts" aria-labelledby="tab-alerts" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-review" aria-labelledby="tab-review" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-audit" aria-labelledby="tab-audit" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-catalog" aria-labelledby="tab-catalog" tabindex="0" hidden></div>
+            <div role="tabpanel" id="view-directory" aria-labelledby="tab-directory" tabindex="0" hidden></div>
+        </section>
+    </main>
+
+    <footer id="controls" class="controls" hidden>
+        <div class="clock">
+            <span class="field-label">Demo clock (UTC)</span>
+            <time id="clock"></time>
+            <button type="button" id="advance">Skip ahead 1 hour</button>
+            <button type="button" id="reset">Start over</button>
+        </div>
+        <details class="api-log">
+            <summary>API calls made <span id="api-count">0</span></summary>
+            <ol id="api-log" reversed></ol>
+        </details>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

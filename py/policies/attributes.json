@@ -1,0 +1,17 @@
+{
+  "_comment": "Role attributes consumed by policies/aegis.cedar. clearance: 1 public, 2 internal, 3 confidential, 4 restricted.",
+  "roles": {
+    "intern":            {"clearance": 1, "privileged": false, "cross_department": false},
+    "contractor":        {"clearance": 2, "privileged": false, "cross_department": false},
+    "analyst":           {"clearance": 2, "privileged": false, "cross_department": false},
+    "engineer":          {"clearance": 3, "privileged": false, "cross_department": false},
+    "manager":           {"clearance": 3, "privileged": false, "cross_department": false},
+    "auditor":           {"clearance": 3, "privileged": false, "cross_department": true},
+    "senior engineer":   {"clearance": 4, "privileged": false, "cross_department": false},
+    "sre":               {"clearance": 4, "privileged": true,  "cross_department": false},
+    "security engineer": {"clearance": 4, "privileged": true,  "cross_department": true},
+    "admin":             {"clearance": 4, "privileged": true,  "cross_department": true}
+  },
+  "default_role": {"clearance": 1, "privileged": false, "cross_department": false},
+  "max_duration_hours": {"public": 72, "internal": 24, "confidential": 8, "restricted": 2}
+}
