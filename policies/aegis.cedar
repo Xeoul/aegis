@@ -35,6 +35,11 @@ unless { principal.role.cross_department };
 forbid (principal, action, resource is Resource)
 when { resource.sensitivity >= 4 && !context.has_justification };
 
+@id("mfa-required")
+@reason("Restricted resources and break-glass need a recent multi-factor sign-in (step-up).")
+forbid (principal, action, resource is Resource)
+when { (resource.sensitivity >= 4 || context.break_glass) && !context.mfa };
+
 @id("approval-required")
 @reason("Restricted resources and privileged actions need a second person to approve.")
 forbid (principal, action, resource is Resource)

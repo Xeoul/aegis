@@ -91,18 +91,36 @@ def test_inactive_and_unknown_roles_fail_closed():
 )
 def test_high_risk_requires_approval_then_passes_when_approved(level, action):
     sre = _user("sre")
-    pending = evaluate(sre, _res(level), _policy(action=action))
+    pending = evaluate(sre, _res(level), _policy(action=action), mfa=True)
     assert pending.decision == "ALLOW" and pending.requires_approval
     assert pending.policy_ids == ["approval-required"]
-    approved = evaluate(sre, _res(level), _policy(action=action), approved=True)
+    approved = evaluate(sre, _res(level), _policy(action=action), approved=True, mfa=True)
     assert approved.decision == "ALLOW" and not approved.requires_approval
 
 
 def test_restricted_requires_justification_and_caps_duration():
     sre = _user("sre")
     level = SensitivityLevel.RESTRICTED
-    denied = evaluate(sre, _res(level), _policy(reason="No justification provided"), approved=True)
+    denied = evaluate(sre, _res(level), _policy(reason="No justification provided"), approved=True, mfa=True)
     assert denied.decision == "DENY" and denied.policy_ids == ["justification-required"]
-    result = evaluate(sre, _res(level), _policy(hours=12), approved=True)
+    result = evaluate(sre, _res(level), _policy(hours=12), approved=True, mfa=True)
     assert result.decision == "ALLOW"
     assert result.granted_duration_hours == 2
+
+
+def test_restricted_and_break_glass_need_step_up():
+    sre = _user("sre")
+    restricted = evaluate(sre, _res(SensitivityLevel.RESTRICTED), _policy())
+    assert restricted.step_up_required and restricted.requires_approval
+    assert restricted.policy_ids == ["mfa-required"] and not restricted.allowed
+    glass = evaluate(sre, _res(SensitivityLevel.INTERNAL), _policy(action="delete"), break_glass=True)
+    assert glass.step_up_required
+    plain = evaluate(sre, _res(SensitivityLevel.INTERNAL), _policy())
+    assert plain.allowed and not plain.step_up_required
+
+
+def test_other_guardrails_deny_without_asking_for_step_up():
+    intern = _user("intern")
+    result = evaluate(intern, _res(SensitivityLevel.RESTRICTED), _policy())
+    assert result.decision == "DENY" and not result.step_up_required
+    assert "mfa-required" not in result.policy_ids and "clearance" in result.policy_ids

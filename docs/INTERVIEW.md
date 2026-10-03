@@ -24,9 +24,10 @@ seconds the first time (it's downloading Python and the Cedar engine) and is ins
 that. The guided examples do most of this for you. Then:
 
 1. **Bob (SRE):** "Need admin on prod-k8s-cluster for 6 hours to roll back a bad deploy."
-   → **pending**. Point out that policy *allowed* it, but restricted + admin means a second
-   person must approve, and 6h was capped to 2h for restricted resources.
-2. **Maya (Bob's manager):** Approvals → approve with a comment. Mention that Bob, Iris (the
+   → **step-up** first: restricted access needs a recent second factor, so Bob reads a code off
+   his (simulated) authenticator. Then **pending**: policy *allowed* it, but restricted + admin
+   means a second person must approve, and 6h was capped to 2h for restricted resources.
+2. **Maya (Bob's manager):** Approvals → approve with a comment (she steps up with MFA too). Mention that Bob, Iris (the
    identity admin) and Grace (the auditor) *can't* approve it. That's separation of duties.
 3. **Bob → My access:** show the countdown bar. "This access disappears on its own. Nobody
    has to remember to remove it."
@@ -94,6 +95,14 @@ sessions) and cancels pending requests. Changing their department, role or manag
 open access, because it was granted under the old attributes. The policy is also re-evaluated at
 approval time in case attributes changed while the request was waiting.
 
+**Someone steals a session cookie. What can they do?**
+Low-risk things only. Restricted access, break-glass and approvals need a second factor from
+the last 15 minutes. Aegis answers `401 insufficient_user_authentication` (RFC 9470 step-up),
+the client re-authenticates with MFA and retries. With an IdP, Aegis reads the token's `amr`
+and `auth_time` claims; the demo has its own TOTP authenticator. Codes are single use, five
+wrong ones lock it and alert, and you can't swap in a new authenticator without the old one.
+The MFA check is a Cedar guardrail too, so it shows up in the policy, not hidden in code.
+
 **How do users get into Aegis in the first place?**
 From the identity provider, over SCIM 2.0. Okta or Entra ID creates the user when they join,
 patches their title, department or manager when they move, and sets `active: false` when they
@@ -115,7 +124,7 @@ privilege), AU-9 (protection of audit information), and SOC 2 CC6.1–6.3. See
 auditors ask for.
 
 **What would you do next / what's missing?**
-MFA step-up for high-risk requests, rate limiting, Postgres instead of SQLite, anchoring the
+Rate limiting, Postgres instead of SQLite, anchoring the
 audit head hash in an append-only store (S3 Object Lock), and a real OIDC IdP in the demo
 (Keycloak). The [threat model](THREAT_MODEL.md) lists these gaps honestly. Pointing them out
 shows you think like a defender.
@@ -123,6 +132,6 @@ shows you think like a defender.
 ## Vocabulary to use naturally
 
 JIT access · zero standing privilege · ABAC vs RBAC · least privilege · separation of duties ·
-joiner/mover/leaver (JML) · SCIM provisioning · break-glass · access certification/recertification · policy as code ·
+joiner/mover/leaver (JML) · SCIM provisioning · MFA step-up (RFC 9470) · amr/acr · break-glass · access certification/recertification · policy as code ·
 fail closed · STS session policies · SourceIdentity · tamper-evident logging · defense in depth ·
 OCSF / SIEM.

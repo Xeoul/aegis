@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app import audit, workflow
-from app.auth import get_current_user
+from app import audit, mfa, workflow
+from app.auth import get_current_user, has_fresh_mfa
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
 from app.models import AccessRequest, AuditEvent, RequestStatus, Resource, User
@@ -54,9 +54,21 @@ def _pending(db: Session, request_id: int, user: User) -> tuple[AccessRequest, R
 
 @router.post("/requests/{request_id}/approve", response_model=RequestOut)
 def approve(
-    request_id: int, payload: CommentIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    request_id: int,
+    payload: CommentIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> AccessRequest:
     req, resource = _pending(db, request_id, user)
+    # Approving grants someone else high-risk access, so a stolen session alone mustn't be
+    # enough: the approver steps up with a second factor first.
+    if not has_fresh_mfa(request):
+        audit.record_request(
+            db, AuditEvent.STEP_UP_REQUIRED, req, actor_id=user.id, detail="Approval needs a recent MFA sign-in."
+        )
+        audit.commit(db)
+        raise mfa.step_up_required("Approving access needs a recent multi-factor sign-in. Step up, then retry.")
     # Attributes may have changed since submission (role change, resource reclassified), so
     # the policy is evaluated again at approval time.
     recheck = evaluate(
@@ -66,6 +78,7 @@ def approve(
             resource=req.resource, action=req.action, allow_reason=req.allow_reason, duration_hours=req.duration_hours
         ),
         approved=True,
+        mfa=req.requester_mfa,
     )
     now = utcnow()
     req.decided_by_id, req.decided_at, req.decision_comment = user.id, now, payload.comment

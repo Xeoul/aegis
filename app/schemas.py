@@ -33,6 +33,7 @@ class UserOut(UserCreate):
 
     id: int
     is_active: bool
+    mfa_enrolled: bool = Field(False, validation_alias="totp_confirmed")
 
 
 class UserUpdate(BaseModel):
@@ -50,6 +51,17 @@ class UserUpdate(BaseModel):
 
 class DevTokenRequest(BaseModel):
     email: EmailStr
+
+
+class MfaEnrollOut(BaseModel):
+    """Shown once: the shared secret, and the otpauth:// URI an authenticator app scans."""
+
+    secret: str
+    otpauth_uri: str
+
+
+class StepUpIn(BaseModel):
+    code: str = Field(min_length=6, max_length=7, examples=["123456"])
 
 
 class TokenOut(BaseModel):

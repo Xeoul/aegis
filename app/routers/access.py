@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials, detection, workflow
-from app.auth import get_current_user, is_oversight
+from app import audit, credentials, detection, mfa, workflow
+from app.auth import get_current_user, has_fresh_mfa, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
 from app.llm_parser import ParserError, detect_injection, parse_access_request
@@ -34,6 +34,7 @@ def load_request(db: Session, request_id: int) -> tuple[AccessRequest, Resource 
 @router.post("/request-access", response_model=AccessDecisionOut)
 def request_access(
     payload: AccessRequestIn,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AccessDecisionOut:
@@ -45,7 +46,23 @@ def request_access(
     policy = parsed.policy
 
     resource = db.scalar(select(Resource).where(Resource.name == policy.resource))
-    result = evaluate(user, resource, policy)
+    fresh_mfa = has_fresh_mfa(request)
+    result = evaluate(user, resource, policy, mfa=fresh_mfa, break_glass=payload.break_glass)
+    if result.step_up_required:
+        # Nothing is recorded as a request: the caller re-authenticates with MFA and retries.
+        audit.record(
+            db,
+            AuditEvent.STEP_UP_REQUIRED,
+            user_id=user.id,
+            actor_id=user.id,
+            resource=policy.resource,
+            action=policy.action,
+            detail=" ".join(result.reasons),
+        )
+        audit.commit(db)
+        raise mfa.step_up_required(
+            f"{policy.action} on {policy.resource} needs a recent multi-factor sign-in. Step up, then retry."
+        )
 
     # Defense in depth against prompt injection: a request that looks like it is trying to
     # steer the parser or the approval process never gets an automatic grant.
@@ -69,6 +86,7 @@ def request_access(
         decision_reason=" ".join(result.reasons),
         parser=parsed.parser,
         risk_flags=",".join(flags),
+        requester_mfa=fresh_mfa,
     )
     db.add(record)
     db.flush()

@@ -11,6 +11,8 @@ How each part of the system works. For the overview, see the [README](../README.
 | `POST` | `/users` | admin | Provision a user |
 | `GET` | `/users`, `/resources` | authenticated | Directory and resource catalog |
 | `PATCH` | `/users/{id}` | admin (not on self) | Mover/leaver changes; revokes the user's open access |
+| `POST` | `/auth/mfa/enroll`, `/auth/step-up` | authenticated (dev mode only) | TOTP enrollment and step-up; see [MFA step-up](#mfa-step-up) |
+| `POST` | `/users/{id}/mfa/reset` | admin (not on self) | Reset a lost or locked authenticator |
 | `POST` | `/request-access` | authenticated | Submit `{request_text, break_glass?}` as the caller; returns the parsed policy, decision and reasons |
 | `GET` | `/requests`, `/requests/{id}` | requester, eligible approvers, oversight | Full lifecycle of a request |
 | `GET` | `/approvals` | authenticated | Requests you may approve and break-glass grants you must review |
@@ -41,6 +43,43 @@ All timestamps are UTC.
   expiry checks). The dev token endpoint returns 404.
 - **Least privilege for administrators.** `is_admin` lets a user provision identities and read
   the audit trail. It grants no access to resources; admins go through the same request flow.
+
+## MFA step-up
+
+A valid session isn't enough for the riskiest actions, since session tokens get stolen
+(infostealers, AiTM phishing). Three actions need a **recent second factor**: requesting a
+restricted resource, using break-glass, and approving anyone's access. This is OAuth step-up
+authentication ([RFC 9470](https://www.rfc-editor.org/rfc/rfc9470)):
+
+```
+POST /request-access            (token without a recent MFA)
+401 WWW-Authenticate: Bearer error="insufficient_user_authentication",
+    error_description="...", acr_values="urn:aegis:acr:mfa", max_age=900
+```
+
+The client re-authenticates with MFA and retries. Nothing is recorded as a request, but a
+`STEP_UP_REQUIRED` audit entry is. For requests the decision stays in Cedar
+(`context.mfa` and the `mfa-required` guardrail); a request that other guardrails deny is
+simply denied, so a step-up never hints that a denied request would otherwise succeed. The
+requester's MFA state is stored with the request and reused when the policy is re-checked
+at approval time.
+
+Where the second factor comes from ([`mfa.py`](../app/mfa.py)):
+
+- **OIDC mode:** the IdP does MFA. A token counts when its `amr` claim
+  ([RFC 8176](https://www.rfc-editor.org/rfc/rfc8176)) names a second factor (`mfa`, `otp`,
+  `hwk`, `swk`, `fido`, ...) or its `acr` is listed in `AEGIS_OIDC_MFA_ACR`, and `auth_time`
+  is within `AEGIS_MFA_MAX_AGE_MINUTES` (default 15).
+- **Dev mode:** the stand-in issuer has its own TOTP authenticator
+  ([RFC 6238](https://www.rfc-editor.org/rfc/rfc6238), checked against the RFC's test vectors).
+  `POST /auth/mfa/enroll` returns a secret and `otpauth://` URI; `POST /auth/step-up {code}`
+  verifies a code and issues a token with `amr`, `acr` and `auth_time`, like an IdP would.
+
+TOTP protections: codes are single use (the last accepted time step is stored, so a replayed
+code fails even within its 30 seconds), ±1 step of clock drift, constant-time comparison,
+five wrong codes in a row lock the authenticator and raise a high-severity `mfa-brute-force`
+alert, and replacing a confirmed authenticator needs a fresh MFA token. An administrator
+resets a lost or locked authenticator with `POST /users/{id}/mfa/reset`, never their own.
 
 ## SCIM provisioning
 
@@ -118,6 +157,7 @@ stands on its own, and every one that fires is returned as a reason, e.g.
 | `privileged-actions` | `delete` and `admin` need a privileged role (`sre`, `security engineer`, `admin`) |
 | `department-boundary` | Confidential and restricted resources stay inside their owning department, except for cross-department roles (`auditor`, `security engineer`, `admin`) |
 | `justification-required` | Restricted resources need a stated reason |
+| `mfa-required` | Restricted resources and break-glass need `context.mfa`: a second factor within the last 15 minutes. If this (with or without `approval-required`) is all that fires, the API answers with a step-up challenge instead of a denial; see [MFA step-up](#mfa-step-up) |
 | `approval-required` | Restricted resources and privileged actions are refused until `context.approved` is true. If this is the only guardrail that fires, the request goes to `PENDING_APPROVAL`. It is evaluated again with `approved=true` when a second person approves |
 
 Unknown roles get the lowest clearance, inactive users match no `permit`, and evaluation
@@ -250,6 +290,8 @@ SIEM copy can be checked against the source.
 | `AEGIS_BUSINESS_HOURS_UTC`, `AEGIS_BUSINESS_DAYS` | `07-19`, `0-4` (Mon–Fri) for the off-hours rule |
 | `AEGIS_DEMO_MODE` | `false` (`true`: sandbox banner, and data reset every `AEGIS_DEMO_RESET_MINUTES`, default 180) |
 | `AEGIS_AUDIT_KEY` | insecure dev key, with a warning. **Set this in any real deployment.** |
+| `AEGIS_MFA_MAX_AGE_MINUTES` | `15` (how recent a second factor must be for step-up actions) |
+| `AEGIS_OIDC_MFA_ACR` | unset (comma-separated IdP `acr` values that count as MFA; `amr` values like `mfa` and `otp` always do) |
 | `AEGIS_SCIM_TOKEN` | unset (SCIM disabled). Set a long random value and give it to the IdP to enable `/scim/v2` |
 
 ## Live demo

@@ -28,6 +28,7 @@ from app.schemas import Decision, ParsedPolicy
 
 POLICY_DIR = Path(__file__).resolve().parent.parent / "policies"
 APPROVAL_POLICY_ID = "approval-required"
+MFA_POLICY_ID = "mfa-required"
 NO_JUSTIFICATION = "no justification provided"
 
 # Emergency (break-glass) grants skip approval, so they are kept very short.
@@ -41,6 +42,9 @@ class EvaluationResult:
     granted_duration_hours: int = 0
     requires_approval: bool = False
     policy_ids: list[str] = field(default_factory=list)
+    # Only the mfa-required guardrail (and possibly approval) stands in the way: the caller
+    # should step up with a second factor and retry, rather than be denied.
+    step_up_required: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -120,8 +124,20 @@ def _detail(policy_id: str, user: User, resource: Resource, policy: ParsedPolicy
     }.get(policy_id, "")
 
 
+def _source_order(policy_id: str) -> tuple[int, str]:
+    # Cedar numbers policies policy0, policy1, ... in the order they appear in the file.
+    number = policy_id.removeprefix("policy")
+    return (int(number), "") if number.isdigit() else (1 << 30, policy_id)
+
+
 def evaluate(
-    user: User, resource: Resource | None, policy: ParsedPolicy, *, approved: bool = False
+    user: User,
+    resource: Resource | None,
+    policy: ParsedPolicy,
+    *,
+    approved: bool = False,
+    mfa: bool = False,
+    break_glass: bool = False,
 ) -> EvaluationResult:
     if resource is None:
         return EvaluationResult("DENY", [f"Resource '{policy.resource}' is not in the resource catalog."])
@@ -137,6 +153,8 @@ def evaluate(
             "context": {
                 "has_justification": bool(reason) and not reason.lower().startswith(NO_JUSTIFICATION),
                 "approved": approved,
+                "mfa": mfa,
+                "break_glass": break_glass,
             },
         },
         bundle.policies,
@@ -148,7 +166,9 @@ def evaluate(
         return EvaluationResult("DENY", [f"Policy evaluation error: {result.diagnostics.errors}"])
 
     clearance = bundle.roles.get(role_id, bundle.default_role)["clearance"]
-    determining = [bundle.annotations.get(pid, {}) for pid in result.diagnostics.reasons]
+    # Report reasons in policy-file order. Cedar returns them as a set, and the native and
+    # WebAssembly builds order that set differently.
+    determining = [bundle.annotations.get(pid, {}) for pid in sorted(result.diagnostics.reasons, key=_source_order)]
     ids = [a.get("id", "?") for a in determining]
 
     def explain(annotation: dict[str, str]) -> str:
@@ -157,11 +177,20 @@ def evaluate(
 
     requires_approval = False
     if not result.allowed:
+        # approval-required and mfa-required are not reasons to deny: one routes the request to
+        # an approver, the other asks for step-up. They're reported only when nothing else fires.
+        blocking = [a for a in determining if a.get("id") not in (APPROVAL_POLICY_ID, MFA_POLICY_ID)]
+        if ids and not blocking and MFA_POLICY_ID in ids:
+            return EvaluationResult(
+                "DENY",
+                [explain(a) for a in determining if a.get("id") == MFA_POLICY_ID],
+                requires_approval=APPROVAL_POLICY_ID in ids,
+                policy_ids=[MFA_POLICY_ID],
+                step_up_required=True,
+            )
         if ids == [APPROVAL_POLICY_ID]:
             requires_approval = True
         else:
-            # approval-required is not a reason to deny, so it is left out of the explanation.
-            blocking = [a for a in determining if a.get("id") != APPROVAL_POLICY_ID]
             return EvaluationResult(
                 "DENY",
                 [explain(a) for a in blocking] or ["No policy permits this request."],

@@ -14,8 +14,12 @@ os.environ["AEGIS_BUSINESS_HOURS_UTC"] = "00-24"
 os.environ["AEGIS_BUSINESS_DAYS"] = "0-6"
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
+from app.auth import create_dev_token  # noqa: E402
+from app.database import SessionLocal, utcnow  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import User  # noqa: E402
 from seed_data import email_for, seed  # noqa: E402
 
 ALICE = email_for("Alice Chen")  # Engineering engineer
@@ -38,11 +42,21 @@ def client():
 
 @pytest.fixture()
 def auth(client):
-    """auth(email) -> headers carrying a bearer token for that seeded user."""
+    """auth(email) -> headers carrying a bearer token for that seeded user.
 
-    def _headers(email: str) -> dict[str, str]:
-        resp = client.post("/auth/dev-token", json={"email": email})
-        assert resp.status_code == 200, resp.text
-        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    Tokens record a just-completed MFA step-up unless ``mfa=False``; the step-up flow itself
+    is exercised in test_mfa.py.
+    """
+
+    def _headers(email: str, *, mfa: bool = True) -> dict[str, str]:
+        if not mfa:
+            resp = client.post("/auth/dev-token", json={"email": email})
+            assert resp.status_code == 200, resp.text
+            return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.email == email))
+            assert user is not None and user.is_active, email
+            token, _ = create_dev_token(user, mfa_at=utcnow())
+        return {"Authorization": f"Bearer {token}"}
 
     return _headers

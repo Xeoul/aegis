@@ -48,6 +48,11 @@ class AuditEvent(str, enum.Enum):
     USER_CREATED = "USER_CREATED"
     USER_UPDATED = "USER_UPDATED"
     USER_DEACTIVATED = "USER_DEACTIVATED"
+    MFA_ENROLLED = "MFA_ENROLLED"
+    MFA_VERIFIED = "MFA_VERIFIED"
+    MFA_FAILED = "MFA_FAILED"
+    MFA_RESET = "MFA_RESET"
+    STEP_UP_REQUIRED = "STEP_UP_REQUIRED"
 
 
 class AlertSeverity(str, enum.Enum):
@@ -77,6 +82,12 @@ class User(Base):
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     # The identity provider's own id for this person, set by SCIM provisioning.
     external_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    # TOTP authenticator for step-up in dev mode (an IdP handles MFA in oidc mode). Confirmed
+    # once the first code is verified; last_step blocks replaying a code.
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    totp_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    totp_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    totp_failures: Mapped[int] = mapped_column(Integer, default=0)
 
     requests: Mapped[list["AccessRequest"]] = relationship(back_populates="user", foreign_keys="AccessRequest.user_id")
     manager: Mapped["User | None"] = relationship(remote_side=[id], foreign_keys=[manager_id])
@@ -116,6 +127,8 @@ class AccessRequest(Base):
     parser: Mapped[str] = mapped_column(String(40), default="")
     # Comma-separated prompt-manipulation patterns found in request_text (see llm_parser).
     risk_flags: Mapped[str] = mapped_column(String(200), default="")
+    # The requester had a fresh second factor when they asked; the approval re-check uses it.
+    requester_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Approval workflow
     approval_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
