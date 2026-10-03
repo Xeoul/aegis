@@ -251,6 +251,27 @@ class AuditVerificationOut(BaseModel):
     head_hash: str
     first_invalid_id: int | None
     reason: str | None
+    checkpoints_checked: int = 0
+
+
+class CheckpointOut(BaseModel):
+    seq: int
+    head_id: int
+    head_hash: str
+    entries: int
+    created_at: str
+    prev: str
+    key_id: str
+    signature: str
+
+
+class CheckpointsOut(BaseModel):
+    """Signed checkpoints, with the Ed25519 public key needed to check them independently."""
+
+    algorithm: Literal["Ed25519"] = "Ed25519"
+    public_key: str
+    key_id: str
+    checkpoints: list[CheckpointOut]
 
 
 # --- Governance --------------------------------------------------------------

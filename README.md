@@ -28,7 +28,7 @@ exact code, including the Cedar policy engine, in your browser. See [how the dem
 | **Break-glass** | Emergency access capped at 1h, alerted, and reviewed afterwards |
 | **MFA step-up** | Restricted access, break-glass and approvals need a recent second factor ([RFC 9470](docs/DESIGN.md#mfa-step-up)); IdP `amr`/`acr` or built-in TOTP |
 | **Federated identity** | OIDC/JWKS token validation (RS256/ES256), PKCE sign-in, and a [Keycloak realm](deploy/keycloak) exercised end to end in CI |
-| **Tamper-evident audit** | HMAC hash-chained log with a verify endpoint |
+| **Tamper-evident audit** | HMAC hash-chained log, plus Ed25519-signed checkpoints outside the database that catch truncation |
 | **Detection and response** | 6 detection rules, alert triage, OCSF-style SIEM export |
 | **Access certification** | Recertification campaigns (unreviewed access is revoked at the deadline) and an access review report with control-effectiveness checks (JSON/CSV) |
 | **LLM security** | Prompt-injection defense in depth; tests with a fully hijacked parser |
@@ -146,6 +146,8 @@ app/
   credentials.py   AWS STS broker: scoped AssumeRole, session revocation
   detection.py     Detection rules -> alerts
   audit.py         HMAC hash-chained audit log + verifier
+  checkpoints.py   Ed25519-signed audit checkpoints (truncation detection)
+  ratelimit.py     Per-caller token buckets (429 + Retry-After)
   siem.py          OCSF-style event export
   scheduler.py     Expiry, stale approvals, revocation pruning
   routers/         HTTP endpoints
@@ -153,7 +155,7 @@ app/
 policies/          Cedar schema, policies, role attributes, policy test cases
 scripts/           LocalStack bootstrap, Keycloak end-to-end check
 deploy/keycloak/   Keycloak realm: demo people, PKCE client, password + TOTP flow
-tests/             175 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
+tests/             186 tests: authz matrix, adversarial LLM, moto-backed AWS, tamper detection
 ```
 
 ## Development

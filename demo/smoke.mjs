@@ -9,7 +9,7 @@ import path from "node:path";
 import { loadPyodide } from "pyodide";
 
 const SITE = path.resolve(process.argv[2] || "_site");
-const PACKAGES = ["pydantic", "sqlalchemy", "anyio", "idna", "typing-extensions"]; // as demo.js
+const PACKAGES = ["pydantic", "sqlalchemy", "anyio", "idna", "typing-extensions", "cryptography"]; // as demo.js
 
 const py = await loadPyodide();
 const wheels = JSON.parse(fs.readFileSync(path.join(SITE, "wheels/manifest.json")));
@@ -80,3 +80,9 @@ assert.equal(leavers, 0, "deprovisioning over SCIM revokes the leaver's grants")
 const hired = await scim("POST", "/scim/v2/Users", { userName: "jordan.reyes@aegis.example", title: "engineer" });
 assert.equal(hired.status, 201);
 console.log("scim smoke ok: leaver revoked, joiner provisioned");
+
+// Signed checkpoints catch deleting the newest entries, under Pyodide's cryptography build.
+const deleted = bridge.truncate(3).toJs();
+const truncated = (await call("GET", "/audit-logs/verify", grace)).body;
+assert.ok(!truncated.valid && truncated.reason.includes("deleted"), JSON.stringify(truncated));
+console.log(`checkpoint smoke ok: deleting #${deleted[0]}-#${deleted[2]} detected`);

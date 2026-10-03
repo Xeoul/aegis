@@ -93,9 +93,12 @@ different people.
 Each entry stores an HMAC of the previous hash plus its own contents. The key is kept outside the
 database. Editing or deleting any row breaks every hash after it, and `/audit-logs/verify` finds
 the first bad link.
-*Know the limitation:* deleting the newest entries leaves a valid, shorter chain. The mitigation
-is the independent copy sent to the SIEM and anchoring the head hash elsewhere. Raising this
-yourself scores points.
+The classic gap: deleting the *newest* entries leaves a shorter chain that still verifies.
+Aegis closes it with signed checkpoints: every 15 minutes it signs "N entries, ending in this
+hash" with an Ed25519 key (not the HMAC key) and appends it to a file outside the database.
+Verify then catches truncation, and even an insider with the HMAC key rewriting recent entries.
+The demo has a "Delete the newest 3 entries" button to show it. *Know the remaining window:*
+anything logged since the last checkpoint, which the SIEM stream covers.
 
 **What happens when someone changes teams or leaves?**
 Joiner/mover/leaver handling: deactivating a user revokes all their grants (including live AWS
@@ -145,7 +148,7 @@ privilege), AU-9 (protection of audit information), and SOC 2 CC6.1–6.3. See
 auditors ask for.
 
 **What would you do next / what's missing?**
-Rate limiting, Postgres instead of SQLite, anchoring the
+Shared rate limits across instances (Redis or the gateway), Postgres instead of SQLite, anchoring the
 audit head hash in an append-only store (S3 Object Lock). The [threat model](THREAT_MODEL.md) lists these gaps honestly. Pointing them out
 shows you think like a defender.
 

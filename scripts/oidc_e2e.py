@@ -87,6 +87,10 @@ def main() -> None:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path=os.getenv("CHROMIUM") or None)
         page = browser.new_page()
+        # Redeem the code a little late, as a slow client would, so tokens are issued after the
+        # second factor rather than in the same second (Keycloak only reports amr values that
+        # are still within their configured max age).
+        page.route(f"{ISSUER}/protocol/openid-connect/token", lambda route: (time.sleep(2), route.continue_()))
         token = sign_in(page, "bob.martinez")
         c = claims(token)
         check(c["iss"] == ISSUER and "aegis-jit" in (c["aud"] if isinstance(c["aud"], list) else [c["aud"]]), c)

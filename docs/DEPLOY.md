@@ -89,7 +89,8 @@ The demo settings are deliberate. A real deployment would differ like this:
 - `AEGIS_AUDIT_KEY` from a secrets manager, with the SIEM stream (`AEGIS_SIEM_LOG_FILE=stdout`)
   shipped to an append-only store.
 - The credential broker running as a dedicated IAM role scoped to `aegis-jit-*` roles.
-- Rate limiting at the gateway.
+- `AEGIS_CHECKPOINT_KEY` from a secrets manager, and the checkpoint file shipped to append-only storage.
+- Rate limits at the gateway too, since the built-in ones are per process.
 - `AEGIS_SCIM_TOKEN` set and given to your IdP's provisioning app, so joiners, movers and
   leavers flow in from Okta or Entra ID; `/scim/v2` reachable only from the IdP.
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, credentials, detection, mfa, workflow
+from app import audit, credentials, detection, mfa, ratelimit, workflow
 from app.auth import get_current_user, has_fresh_mfa, is_oversight
 from app.database import get_db, utcnow
 from app.evaluator import evaluate
@@ -31,7 +31,7 @@ def load_request(db: Session, request_id: int) -> tuple[AccessRequest, Resource 
     return req, db.scalar(select(Resource).where(Resource.name == req.resource))
 
 
-@router.post("/request-access", response_model=AccessDecisionOut)
+@router.post("/request-access", response_model=AccessDecisionOut, dependencies=[Depends(ratelimit.access_requests)])
 def request_access(
     payload: AccessRequestIn,
     request: Request,

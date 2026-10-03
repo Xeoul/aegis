@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, policy_tests
+from app import audit, policy_tests, ratelimit
 from app.auth import require_oversight
 from app.database import get_db
 from app.evaluator import evaluate
@@ -14,7 +14,7 @@ from app.schemas import ParsedPolicy, PolicyTestsOut, SimulateIn, SimulateOut
 router = APIRouter(prefix="/policy", tags=["policy"])
 
 
-@router.post("/simulate", response_model=SimulateOut)
+@router.post("/simulate", response_model=SimulateOut, dependencies=[Depends(ratelimit.simulations)])
 def simulate(
     payload: SimulateIn, analyst: User = Depends(require_oversight), db: Session = Depends(get_db)
 ) -> SimulateOut:

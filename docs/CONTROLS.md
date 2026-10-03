@@ -23,13 +23,15 @@ each one. This is a design-level mapping for a portfolio project, not a certifie
 | **AC-6(10)** Prohibit Non-privileged Users from Executing Privileged Functions | | The `privileged-actions` guardrail | `test_deny_privileged_action_for_non_privileged_role` |
 | **AU-2 / AU-3** Event Logging, Content | Log the relevant events with enough detail | Who (actor), whom (subject), what, which resource, when and why for every lifecycle event | `models.AuditLog` |
 | **AU-6** Audit Review, Analysis, Reporting | | Detection rules, alert triage, access review | `detection.py`, `routers/governance.py` |
-| **AU-9** Protection of Audit Information | Protect audit data from unauthorized modification | HMAC hash chain; read access limited to oversight roles | `audit.py`, `test_audit_chain.py` |
+| **AU-9** Protection of Audit Information | Protect audit data from unauthorized modification | HMAC hash chain; Ed25519-signed checkpoints outside the database catch truncation; read access limited to oversight roles | `audit.py`, `checkpoints.py`, `test_audit_chain.py`, `test_hardening.py` |
+| **AU-9(3)** Cryptographic Protection | | HMAC-SHA256 chain plus Ed25519 checkpoint signatures with a published public key | `checkpoints.py` |
 | **AU-9(2)** Store on Separate Physical Systems | | SIEM push stream and pull export | `siem.py` |
 | **AU-10** Non-repudiation | | Actor recorded on every event; STS `SourceIdentity` lands in CloudTrail | `credentials.py` |
 | **AU-12** Audit Record Generation | | Written atomically with the change it describes (same transaction) | `audit.commit` |
 | **CA-7** Continuous Monitoring | | Control checks in the access review (self-approvals, grants held by leavers, chain integrity) | `ControlChecks` |
 | **CM-3** Configuration Change Control | | Policy changes are pinned by declarative test cases run in CI against both Cedar builds | `policies/tests.json`, `python -m app.policy_tests` |
 | **CM-4** Impact Analyses | | What-if simulation shows how a role, department or classification change would alter a decision before it's made | `POST /policy/simulate`, `test_what_if_a_mover` |
+| **SC-5** Denial-of-service Protection | | Per-caller rate limits on sign-in, MFA, access requests and simulation | `ratelimit.py` |
 | **IA-2** Identification and Authentication | | OIDC tokens verified against the IdP's JWKS | `auth.py` |
 | **IA-2(1)** Multi-factor Authentication to Privileged Accounts | | Restricted access, break-glass and approvals need a recent second factor (step-up) | `mfa-required` policy, `test_mfa.py` |
 | **IA-2(8)** Replay-resistant Authentication | | TOTP time steps are single use | `test_codes_cannot_be_replayed` |

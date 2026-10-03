@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, mfa
+from app import audit, config, mfa, ratelimit
 from app.auth import create_dev_token, get_current_user, has_fresh_mfa
 from app.database import get_db, utcnow
 from app.models import Alert, AlertSeverity, AuditEvent, User
@@ -17,7 +17,7 @@ def _dev_only() -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
 
 
-@router.post("/auth/dev-token", response_model=TokenOut)
+@router.post("/auth/dev-token", response_model=TokenOut, dependencies=[Depends(ratelimit.sign_in)])
 def dev_token(payload: DevTokenRequest, db: Session = Depends(get_db)) -> TokenOut:
     """Stand-in identity provider for local development. Disabled when AEGIS_AUTH_MODE=oidc."""
     _dev_only()
@@ -46,7 +46,7 @@ def enroll_mfa(request: Request, user: User = Depends(get_current_user), db: Ses
     return MfaEnrollOut(secret=user.totp_secret, otpauth_uri=mfa.otpauth_uri(user.totp_secret, user.email))
 
 
-@router.post("/auth/step-up", response_model=TokenOut, dependencies=[Depends(_dev_only)])
+@router.post("/auth/step-up", response_model=TokenOut, dependencies=[Depends(_dev_only), Depends(ratelimit.mfa_codes)])
 def step_up(payload: StepUpIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TokenOut:
     """Verify a TOTP code and issue a token that records the second factor (amr, acr, auth_time)."""
     if user.totp_secret is None:

@@ -9,6 +9,7 @@ import os
 
 from sqlalchemy import select
 
+from app import checkpoints
 from app.database import Base, SessionLocal, engine, init_db
 from app.models import Resource, SensitivityLevel, User
 
@@ -79,6 +80,7 @@ def aws_config(name: str) -> dict[str, str | None]:
 def seed(reset: bool = False) -> None:
     if reset:
         Base.metadata.drop_all(bind=engine)
+        checkpoints.clear()  # they vouch for the log that was just dropped
     init_db()
     with SessionLocal() as db:
         existing_users = {u.email for u in db.scalars(select(User))}
