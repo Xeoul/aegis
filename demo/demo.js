@@ -424,7 +424,7 @@ async function renderGrants() {
     if (!res.body.length) return view.replaceChildren(empty('No active grants.'));
     const oversight = res.body.some((g) => g.user_id !== current.id);
     view.replaceChildren(
-        oversight ? h('p', { class: 'hint' }, 'Your role oversees access, so you see everyone’s grants.') : null,
+        oversight ? h('p', { class: 'hint' }, 'Your role oversees access, so you see everyone’s grants.') : '',
         h('ul', { class: 'rows' }, res.body.map((g) => {
             const row = requestRow(g, inlineAction('Revoke', 'No longer needed', (reason) => api('POST', `/grants/${g.id}/revoke`, { reason }), { danger: true }));
             if (g.user_id !== current.id) row.querySelector('.row-head').after(h('p', { class: 'meta' }, `Held by ${nameOf(g.user_id)}`));
@@ -611,7 +611,7 @@ async function renderDirectory() {
                 hired ? 'Jordan Reyes is provisioned' : 'Hire Jordan Reyes (engineer, reports to Maya)')),
         lastScim ? h('details', { class: 'scim-last' },
             h('summary', null, `Last SCIM call: ${lastScim.method} ${lastScim.path} → ${lastScim.status}`),
-            h('pre', null, JSON.stringify(lastScim.body ?? null, null, 2))) : null,
+            h('pre', null, JSON.stringify(lastScim.body ?? null, null, 2))) : '',
         h('div', { class: 'table-scroll' }, h('table', { class: 'catalog' },
             h('thead', null, h('tr', null, ['Person', 'Title', 'Department', 'Status', ''].map((x) => h('th', { scope: 'col' }, x)))),
             h('tbody', null, users.map((u) => h('tr', null,
