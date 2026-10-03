@@ -12,7 +12,7 @@ const PERSONAS = [
   ["iris.novak@aegis.example", "Iris Novak", "identity admin"],
 ];
 const OVERSIGHT = new Set(["auditor", "security engineer"]);
-const state = { token: null, me: null, users: new Map(), tab: "request" };
+const state = { token: null, me: null, users: new Map(), tab: "request", meta: null };
 
 // --- DOM helpers ---------------------------------------------------------------
 
@@ -93,6 +93,7 @@ const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(da
 // Asks for a TOTP code in a dialog (enrolling an authenticator first if needed) and swaps the
 // session token for one that records the second factor. Resolves false if cancelled.
 async function stepUp(message) {
+  if (state.meta?.auth_mode === "oidc") return oidcStepUp(message);
   let enrollment = null;
   if (!state.me?.mfa_enrolled) enrollment = await post("/auth/mfa/enroll");
   return new Promise((resolve) => {
@@ -159,10 +160,98 @@ async function login(email) {
   }
 }
 
-function logout() {
+function logout(endIdpSession = false) {
+  const hadToken = Boolean(state.token);
   state.token = null; state.me = null;
   try { sessionStorage.removeItem("aegis-token"); } catch (_) { /* ignore */ }
   $("#app").hidden = true; $("#login").hidden = false;
+  if (endIdpSession === true && hadToken && state.meta?.auth_mode === "oidc") oidcLogout();
+}
+
+// --- OIDC: authorization code flow with PKCE (RFC 7636) --------------------------
+
+// The dashboard is a public client: no secret, so PKCE binds the code to this browser tab.
+const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const randomString = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
+const redirectUri = () => `${location.origin}/ui/`;
+
+async function discovery() {
+  if (!discovery.doc) {
+    const resp = await fetch(`${state.meta.oidc.issuer}/.well-known/openid-configuration`);
+    if (!resp.ok) throw new Error(`Identity provider unreachable (${resp.status})`);
+    discovery.doc = await resp.json();
+  }
+  return discovery.doc;
+}
+
+async function oidcLogin(extra = {}) {
+  const { authorization_endpoint } = await discovery();
+  const verifier = randomString();
+  const flow = { verifier, state: randomString(), nonce: randomString() };
+  sessionStorage.setItem("aegis-pkce", JSON.stringify(flow));
+  const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  const params = new URLSearchParams({
+    response_type: "code", client_id: state.meta.oidc.client_id, redirect_uri: redirectUri(),
+    scope: "openid email profile", state: flow.state, nonce: flow.nonce,
+    code_challenge: challenge, code_challenge_method: "S256", ...extra,
+  });
+  location.assign(`${authorization_endpoint}?${params}`);
+}
+
+// Back from the IdP with ?code=...&state=...: check state, redeem the code with the verifier.
+async function oidcCallback() {
+  const params = new URLSearchParams(location.search);
+  history.replaceState(null, "", location.pathname);
+  let flow = null;
+  try { flow = JSON.parse(sessionStorage.getItem("aegis-pkce")); sessionStorage.removeItem("aegis-pkce"); } catch (_) { /* none */ }
+  if (params.get("error")) throw new Error(params.get("error_description") || params.get("error"));
+  if (!flow || params.get("state") !== flow.state) throw new Error("Sign-in response didn't match this tab; try again");
+  const { token_endpoint } = await discovery();
+  const resp = await fetch(token_endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code", code: params.get("code"), redirect_uri: redirectUri(),
+      client_id: state.meta.oidc.client_id, code_verifier: flow.verifier,
+    }),
+  });
+  const tokens = await resp.json();
+  if (!resp.ok) throw new Error(tokens.error_description || tokens.error || "Token exchange failed");
+  state.token = tokens.access_token;
+  sessionStorage.setItem("aegis-token", state.token);
+  sessionStorage.setItem("aegis-id-token", tokens.id_token || "");
+}
+
+async function oidcLogout() {
+  const { end_session_endpoint } = await discovery();
+  const idToken = sessionStorage.getItem("aegis-id-token");
+  sessionStorage.removeItem("aegis-id-token");
+  if (!end_session_endpoint) return;
+  const params = new URLSearchParams({ client_id: state.meta.oidc.client_id, post_logout_redirect_uri: redirectUri() });
+  if (idToken) params.set("id_token_hint", idToken);
+  location.assign(`${end_session_endpoint}?${params}`);
+}
+
+// RFC 9470 with a real IdP: sign in again (password + second factor). The page reloads, so
+// the person submits again afterwards.
+function oidcStepUp(message) {
+  return new Promise((resolve) => {
+    const dialog = h("dialog", { class: "stepup" },
+      h("form", { method: "dialog" },
+        h("h2", {}, "Confirm it's you"),
+        h("p", {}, message),
+        h("p", {}, "Your identity provider will ask you to sign in again with your second factor. Then submit once more."),
+        h("div", { class: "row" },
+          h("button", { class: "primary", value: "go" }, "Continue to sign-in"),
+          h("button", { class: "ghost", value: "cancel" }, "Cancel"))));
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      if (dialog.returnValue === "go") oidcLogin({ prompt: "login", max_age: "0" });
+      resolve(false);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
 }
 
 const isOversight = (me) => me.is_admin || OVERSIGHT.has(me.role.toLowerCase());
@@ -398,6 +487,13 @@ async function downloadCsv(ev) {
 async function loadMeta() {
   try {
     const m = await api("/meta");
+    state.meta = m;
+    if (m.auth_mode === "oidc") {
+      $("#personas").hidden = true;
+      $("#login-form").hidden = true;
+      $("#login-sso").hidden = false;
+      $("#login-fine").textContent = `Signing in through ${new URL(m.oidc.issuer).host} (OpenID Connect, authorization code + PKCE).`;
+    }
     if (!m.demo_mode) return;
     const parts = [h("b", {}, "Demo sandbox"), h("span", {}, "fictional company, people and data")];
     if (m.next_reset_at) {
@@ -412,7 +508,6 @@ async function loadMeta() {
 }
 
 try { applyTheme(localStorage.getItem("aegis-theme")); } catch (_) { /* storage unavailable */ }
-loadMeta();
 $("#personas").replaceChildren(...PERSONAS.map(([email, name, role]) =>
   h("button", { class: "persona", type: "button", onclick: () => login(email) },
     h("span", {}, name), h("span", { class: "role" }, role, " ", h("span", { class: "arrow" }, "→")))));
@@ -424,6 +519,14 @@ $("#request-text").addEventListener("keydown", (ev) => {
 $("#verify").addEventListener("click", verifyChain);
 $("#csv").addEventListener("click", downloadCsv);
 $("#theme").addEventListener("click", toggleTheme);
-$("#logout").addEventListener("click", logout);
-try { state.token = sessionStorage.getItem("aegis-token"); } catch (_) { state.token = null; }
-if (state.token) start().catch(logout);
+$("#logout").addEventListener("click", () => logout(true));
+$("#login-sso").addEventListener("click", () => oidcLogin().catch((e) => { $("#login-error").textContent = e.message; }));
+
+(async () => {
+  await loadMeta();
+  if (state.meta?.auth_mode === "oidc" && new URLSearchParams(location.search).has("state")) {
+    try { await oidcCallback(); } catch (e) { $("#login-error").textContent = e.message; return; }
+  }
+  try { state.token = sessionStorage.getItem("aegis-token"); } catch (_) { state.token = null; }
+  if (state.token) start().catch(logout);
+})();

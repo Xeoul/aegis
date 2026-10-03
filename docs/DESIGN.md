@@ -41,6 +41,17 @@ All timestamps are UTC.
 - **`AEGIS_AUTH_MODE=oidc`**: tokens come from an external IdP (Keycloak, Okta, Entra ID,
   Auth0) and are verified against its JWKS (`RS256`/`ES256` only, with issuer, audience and
   expiry checks). The dev token endpoint returns 404.
+- **Dashboard sign-in in `oidc` mode** uses the authorization code flow with PKCE (S256) as a
+  public client (`AEGIS_OIDC_CLIENT_ID`, default `aegis-jit`), with `state` and `nonce`
+  checks. `/meta` publishes the issuer and client id, and the dashboard's CSP allows
+  `connect-src` to the issuer's origin only. A step-up challenge sends the person back to the
+  IdP with `prompt=login&max_age=0`.
+- **A real IdP, tested in CI.** [`deploy/keycloak/aegis-realm.json`](../deploy/keycloak/aegis-realm.json)
+  is a Keycloak realm with the demo people, the PKCE client, an audience mapper (`aud:
+  aegis-jit`), and a browser flow that asks for a password and a TOTP code and reports them
+  as `amr: ["pwd", "otp"]`. The `oidc` CI job starts Keycloak, signs in to the dashboard in a
+  headless browser and checks what Aegis does with the token
+  ([`scripts/oidc_e2e.py`](../scripts/oidc_e2e.py)).
 - **Least privilege for administrators.** `is_admin` lets a user provision identities and read
   the audit trail. It grants no access to resources; admins go through the same request flow.
 
@@ -283,6 +294,7 @@ SIEM copy can be checked against the source.
 | `AEGIS_JWT_SECRET` | random per process (dev mode signing key) |
 | `AEGIS_TOKEN_TTL_MINUTES` | `60` |
 | `AEGIS_OIDC_ISSUER`, `AEGIS_OIDC_AUDIENCE`, `AEGIS_OIDC_JWKS_URL` | required in `oidc` mode (audience defaults to `aegis-jit`) |
+| `AEGIS_OIDC_CLIENT_ID` | `aegis-jit` (the dashboard's public PKCE client at the IdP) |
 | `AEGIS_CREDENTIAL_BROKER` | `none` (`aws` to issue STS credentials) |
 | `AEGIS_AWS_MAX_SESSION_SECONDS` | `3600` (must not exceed the roles' `MaxSessionDuration`) |
 | `AEGIS_AWS_ACCOUNT_ID` | `000000000000` (LocalStack), used by `seed_data.py` to build ARNs |

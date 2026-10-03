@@ -1,4 +1,5 @@
-# docker compose up          -> Aegis on http://localhost:8000 (dashboard + API docs at /docs)
+# docker compose up aegis    -> Aegis on http://localhost:8000 (dashboard + API docs at /docs)
+# docker compose --profile oidc up  -> Keycloak on :8080 and Aegis in oidc mode on http://localhost:8001
 # docker compose up -d localstack && python scripts/localstack_bootstrap.py  -> AWS broker demo
 services:
   aegis:
@@ -25,5 +26,40 @@ services:
     environment:
       - SERVICES=iam,sts,s3,dynamodb,secretsmanager
 
+  # A real OpenID Connect provider for the dashboard: sign in at http://localhost:8001 as any
+  # demo person (e.g. bob.martinez) with password "aegis-demo" and the demo authenticator key
+  # from docs/DEPLOY.md. Local demo only: the admin password and realm secrets are public.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    profiles: [oidc]
+    command: start-dev --import-realm
+    ports:
+      - "8080:8080"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Tokens say iss=http://localhost:8080 (what the browser sees); Aegis fetches the JWKS
+      # over the compose network at keycloak:8080.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    volumes:
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+
+  aegis-oidc:
+    build: .
+    profiles: [oidc]
+    depends_on: [keycloak]
+    ports:
+      - "8001:8000"
+    environment:
+      AEGIS_AUTH_MODE: oidc
+      AEGIS_OIDC_ISSUER: http://localhost:8080/realms/aegis
+      AEGIS_OIDC_JWKS_URL: http://keycloak:8080/realms/aegis/protocol/openid-connect/certs
+      AEGIS_AUDIT_KEY: ${AEGIS_AUDIT_KEY:-change-me-in-production}
+      AEGIS_SIEM_LOG_FILE: stdout
+    volumes:
+      - aegis-oidc-data:/data
+
 volumes:
   aegis-data:
+  aegis-oidc-data:

@@ -103,6 +103,13 @@ and `auth_time` claims; the demo has its own TOTP authenticator. Codes are singl
 wrong ones lock it and alert, and you can't swap in a new authenticator without the old one.
 The MFA check is a Cedar guardrail too, so it shows up in the policy, not hidden in code.
 
+**Does it work with a real identity provider?**
+Yes. In `oidc` mode Aegis verifies the IdP's RS256 tokens against its JWKS (issuer, audience,
+expiry), and the dashboard signs in with the authorization code flow and PKCE. The repo ships
+a Keycloak realm with a password-plus-TOTP flow, and a CI job starts Keycloak, logs in through
+a headless browser, and checks that the token's `amr: ["pwd", "otp"]` satisfies step-up and
+that an edited token is rejected. Okta or Entra ID work the same way: change three variables.
+
 **How do users get into Aegis in the first place?**
 From the identity provider, over SCIM 2.0. Okta or Entra ID creates the user when they join,
 patches their title, department or manager when they move, and sets `active: false` when they
@@ -125,13 +132,12 @@ auditors ask for.
 
 **What would you do next / what's missing?**
 Rate limiting, Postgres instead of SQLite, anchoring the
-audit head hash in an append-only store (S3 Object Lock), and a real OIDC IdP in the demo
-(Keycloak). The [threat model](THREAT_MODEL.md) lists these gaps honestly. Pointing them out
+audit head hash in an append-only store (S3 Object Lock). The [threat model](THREAT_MODEL.md) lists these gaps honestly. Pointing them out
 shows you think like a defender.
 
 ## Vocabulary to use naturally
 
 JIT access · zero standing privilege · ABAC vs RBAC · least privilege · separation of duties ·
-joiner/mover/leaver (JML) · SCIM provisioning · MFA step-up (RFC 9470) · amr/acr · break-glass · access certification/recertification · policy as code ·
+joiner/mover/leaver (JML) · SCIM provisioning · MFA step-up (RFC 9470) · amr/acr · OIDC + PKCE · break-glass · access certification/recertification · policy as code ·
 fail closed · STS session policies · SourceIdentity · tamper-evident logging · defense in depth ·
 OCSF / SIEM.

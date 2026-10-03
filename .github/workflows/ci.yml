@@ -75,6 +75,46 @@ jobs:
           npm install --no-save --prefix demo pyodide@0.27.7
           node demo/smoke.mjs _site
 
+  oidc:
+    # A real IdP round trip: Keycloak with the demo realm, Aegis in oidc mode, and a headless
+    # browser signing in to the dashboard with PKCE, a password and a TOTP code.
+    runs-on: ubuntu-latest
+    env:
+      AEGIS_AUTH_MODE: oidc
+      AEGIS_OIDC_ISSUER: http://localhost:8080/realms/aegis
+      AEGIS_OIDC_JWKS_URL: http://localhost:8080/realms/aegis/protocol/openid-connect/certs
+      AEGIS_AUDIT_KEY: ci-only-audit-key
+      AEGIS_DATABASE_URL: sqlite:///./oidc.db
+      AEGIS_BUSINESS_HOURS_UTC: "00-24"
+      AEGIS_BUSINESS_DAYS: "0-6"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start Keycloak with the demo realm
+        run: |
+          docker run -d --name keycloak -p 8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -hex 16)" \
+            -v "$PWD/deploy/keycloak:/opt/keycloak/data/import:ro" \
+            quay.io/keycloak/keycloak:26.4 start-dev --import-realm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt playwright==1.63.0 && python -m playwright install --with-deps chromium
+      - name: Wait for Keycloak
+        run: timeout 180 bash -c 'until curl -sf localhost:8080/realms/aegis/.well-known/openid-configuration > /dev/null; do sleep 3; done'
+      - name: Start Aegis in oidc mode
+        run: |
+          python seed_data.py --reset > /dev/null
+          nohup uvicorn app.main:app --port 8001 > aegis.log 2>&1 &
+          timeout 30 bash -c 'until curl -sf localhost:8001/health > /dev/null; do sleep 1; done'
+      - name: Sign in through Keycloak and use the token
+        run: python scripts/oidc_e2e.py
+      - name: Logs
+        if: failure()
+        run: |
+          cat aegis.log
+          docker logs keycloak 2>&1 | tail -80
+
   docker:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,339 @@
+{
+  "realm": "aegis",
+  "displayName": "Aegis demo identity provider",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "browserFlow": "aegis browser",
+  "authenticationFlows": [
+    {
+      "alias": "aegis browser",
+      "description": "SSO cookie, or password plus a one-time code. Every sign-in uses two factors.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "flowAlias": "aegis browser forms",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "authenticatorFlow": true,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "aegis browser forms",
+      "description": "Password, then TOTP. Each step reports an RFC 8176 amr value.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorConfig": "amr pwd",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorConfig": "amr otp",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false,
+          "userSetupAllowed": true
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "amr pwd",
+      "config": {
+        "default.reference.value": "pwd"
+      }
+    },
+    {
+      "alias": "amr otp",
+      "config": {
+        "default.reference.value": "otp"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "aegis-jit",
+      "name": "Aegis-JIT dashboard",
+      "description": "Public browser client: authorization code flow with PKCE (S256).",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:8001/ui/*",
+        "http://127.0.0.1:8001/ui/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "aegis-jit audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "aegis-jit",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "authentication methods (amr)",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice.chen",
+      "email": "alice.chen@aegis.example",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Chen",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "bob.martinez",
+      "email": "bob.martinez@aegis.example",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Martinez",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "carol.singh",
+      "email": "carol.singh@aegis.example",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Singh",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "dan.okafor",
+      "email": "dan.okafor@aegis.example",
+      "emailVerified": true,
+      "firstName": "Dan",
+      "lastName": "Okafor",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "eve.johansson",
+      "email": "eve.johansson@aegis.example",
+      "emailVerified": true,
+      "firstName": "Eve",
+      "lastName": "Johansson",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "frank.lee",
+      "email": "frank.lee@aegis.example",
+      "emailVerified": true,
+      "firstName": "Frank",
+      "lastName": "Lee",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "grace.kim",
+      "email": "grace.kim@aegis.example",
+      "emailVerified": true,
+      "firstName": "Grace",
+      "lastName": "Kim",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "hank.patel",
+      "email": "hank.patel@aegis.example",
+      "emailVerified": true,
+      "firstName": "Hank",
+      "lastName": "Patel",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "iris.novak",
+      "email": "iris.novak@aegis.example",
+      "emailVerified": true,
+      "firstName": "Iris",
+      "lastName": "Novak",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "username": "maya.torres",
+      "email": "maya.torres@aegis.example",
+      "emailVerified": true,
+      "firstName": "Maya",
+      "lastName": "Torres",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aegis-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Demo authenticator",
+          "secretData": "{\"value\": \"aegis-demo-totp-key!\"}",
+          "credentialData": "{\"subType\": \"totp\", \"digits\": 6, \"counter\": 0, \"period\": 30, \"algorithm\": \"HmacSHA1\"}"
+        }
+      ]
+    }
+  ]
+}
