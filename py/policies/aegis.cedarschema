@@ -1,0 +1,31 @@
+// Entity and action model for Aegis-JIT access requests.
+
+entity Role = {
+  clearance: Long,          // highest sensitivity rank this role may access (1-4)
+  privileged: Bool,         // may perform delete/admin actions
+  cross_department: Bool,   // may access other departments' confidential/restricted data
+};
+
+entity User in [Role] = {
+  role: Role,
+  department: String,
+  active: Bool,
+};
+
+entity Resource = {
+  sensitivity: Long,        // 1 public, 2 internal, 3 confidential, 4 restricted
+  owner_department?: String,
+};
+
+type RequestContext = {
+  has_justification: Bool,
+  approved: Bool,           // a second person has approved this request
+  mfa: Bool,                // the requester signed in with a second factor recently
+  break_glass: Bool,        // emergency access that skips approval
+};
+
+action read, write, delete, admin appliesTo {
+  principal: User,
+  resource: Resource,
+  context: RequestContext,
+};

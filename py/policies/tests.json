@@ -1,0 +1,142 @@
+{
+  "_comment": "Policy test cases for policies/aegis.cedar. Each case is a request and the outcome the policy must produce: allow, needs-approval, step-up or deny. 'because' lists the policies that must decide it (for step-up and deny, exactly those). Run: python -m app.policy_tests",
+  "cases": [
+    {
+      "name": "Engineer reads a confidential resource in their own department",
+      "principal": {"role": "engineer", "department": "Engineering"},
+      "action": "read",
+      "resource": {"sensitivity": "confidential", "owner_department": "Engineering"},
+      "expect": "allow",
+      "because": ["baseline-active-employee"]
+    },
+    {
+      "name": "Intern reads a public resource",
+      "principal": {"role": "intern", "department": "Marketing"},
+      "action": "read",
+      "resource": {"sensitivity": "public"},
+      "expect": "allow"
+    },
+    {
+      "name": "Deactivated user matches no permit",
+      "principal": {"role": "engineer", "department": "Engineering", "active": false},
+      "action": "read",
+      "resource": {"sensitivity": "public"},
+      "expect": "deny",
+      "because": []
+    },
+    {
+      "name": "Intern can't read internal data (clearance)",
+      "principal": {"role": "intern", "department": "Marketing"},
+      "action": "read",
+      "resource": {"sensitivity": "internal"},
+      "expect": "deny",
+      "because": ["clearance"]
+    },
+    {
+      "name": "Unknown role gets the lowest clearance",
+      "principal": {"role": "wizard", "department": "Engineering"},
+      "action": "read",
+      "resource": {"sensitivity": "internal"},
+      "expect": "deny",
+      "because": ["clearance"]
+    },
+    {
+      "name": "Engineer can't delete (privileged action)",
+      "principal": {"role": "engineer", "department": "Engineering"},
+      "action": "delete",
+      "resource": {"sensitivity": "internal", "owner_department": "Engineering"},
+      "expect": "deny",
+      "because": ["privileged-actions"]
+    },
+    {
+      "name": "Finance manager can't read Engineering's confidential data (department boundary)",
+      "principal": {"role": "manager", "department": "Finance"},
+      "action": "read",
+      "resource": {"sensitivity": "confidential", "owner_department": "Engineering"},
+      "expect": "deny",
+      "because": ["department-boundary"]
+    },
+    {
+      "name": "Auditor crosses departments for confidential data",
+      "principal": {"role": "auditor", "department": "Compliance"},
+      "action": "read",
+      "resource": {"sensitivity": "confidential", "owner_department": "Finance"},
+      "expect": "allow"
+    },
+    {
+      "name": "Intern editing payroll trips every relevant guardrail",
+      "principal": {"role": "intern", "department": "Marketing"},
+      "action": "write",
+      "resource": {"sensitivity": "confidential", "owner_department": "Finance"},
+      "expect": "deny",
+      "because": ["clearance", "department-boundary"]
+    },
+    {
+      "name": "SRE asks for restricted access without MFA: step up first",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "admin",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "expect": "step-up",
+      "because": ["mfa-required"]
+    },
+    {
+      "name": "SRE with MFA: restricted admin waits for a second approver",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "admin",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "context": {"mfa": true},
+      "expect": "needs-approval",
+      "because": ["approval-required"]
+    },
+    {
+      "name": "...and is allowed once approved",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "admin",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "context": {"mfa": true, "approved": true},
+      "expect": "allow"
+    },
+    {
+      "name": "Restricted access needs a justification",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "read",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "context": {"mfa": true, "approved": true, "justification": false},
+      "expect": "deny",
+      "because": ["justification-required"]
+    },
+    {
+      "name": "Privileged action on internal data needs approval but not MFA",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "delete",
+      "resource": {"sensitivity": "internal", "owner_department": "Engineering"},
+      "expect": "needs-approval",
+      "because": ["approval-required"]
+    },
+    {
+      "name": "Break-glass needs MFA even below restricted",
+      "principal": {"role": "sre", "department": "Engineering"},
+      "action": "delete",
+      "resource": {"sensitivity": "internal", "owner_department": "Engineering"},
+      "context": {"break_glass": true},
+      "expect": "step-up",
+      "because": ["mfa-required"]
+    },
+    {
+      "name": "MFA doesn't override clearance: no step-up prompt for a request that would fail anyway",
+      "principal": {"role": "engineer", "department": "Engineering"},
+      "action": "read",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "expect": "deny",
+      "because": ["clearance"]
+    },
+    {
+      "name": "Security engineer can reach another department's restricted keys with MFA and approval",
+      "principal": {"role": "security engineer", "department": "Security"},
+      "action": "read",
+      "resource": {"sensitivity": "restricted", "owner_department": "Engineering"},
+      "context": {"mfa": true, "approved": true},
+      "expect": "allow"
+    }
+  ]
+}
